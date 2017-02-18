@@ -21,14 +21,14 @@ Purpose: Send up in a rocket a GPS unit that transmits Lat/Long and saves more e
 // MISO - pin 12
 // CLK - pin 13
 // CS - pin 4 (for MKRZero SD: SDCARD_SS_PIN) (chipSelect = CS)
-const int chipSelect = 4;
+const byte chipSelect = 4;
 
 // Begin Pin Declarations
 const byte HC12RxdPin = 4;                          // "RXD" Pin on HC12
 const byte HC12TxdPin = 5;                          // "TXD" Pin on HC12
 const byte HC12SetPin = 6;                          // "SET" Pin on HC12
-const byte  GPSRxdPin = 7;                          // "RXD" on GPS (if available)
-const byte  GPSTxdPin = 8;                          // "TXD" on GPS
+const byte GPSRxdPin = 7;                          // "RXD" on GPS (if available)
+const byte GPSTxdPin = 8;                          // "TXD" on GPS
 
 // Begin variable declarations
 char byteIn;                                        // Temporary variable
@@ -63,27 +63,47 @@ void setup() {
 
 // the loop function runs over and over again forever
 void loop() {
+  readHC12();
+  readSerialBuffer();
+  readGPS();
+}
+
+void readHC12() {
   while (HC12.available()) {                        // If Arduino's HC12 rx buffer has data
     byteIn = HC12.read();                           // Store each character in byteIn
     HC12ReadBuffer += char(byteIn);                 // Write each character of byteIn to HC12ReadBuffer
     if (byteIn == '\n')                             // At the end of the line
       HC12End = true;                               // Set HC12End flag to true.
   }
+  if (HC12End) {                                    // If HC12End flag is true
+    if (HC12ReadBuffer.startsWith("AT")) {          // Check to see if a command was received
+      digitalWrite(HC12SetPin, LOW);                // If true, enter command mode
+      delay(40);                                    // Delay before writing command
+      HC12.print(HC12ReadBuffer);                   // Send incoming command back to HC12
+      Serial.println(HC12ReadBuffer);               // Send command to serial
+      delay(1000);                                  // Wait 0.5s for reply
+      digitalWrite(HC12SetPin, HIGH);               // Exit command / enter transparent mode
+      delay(80);                                    // Delay before proceeding
+      HC12.println("Remote Command Executed");
+    }
+    if (HC12ReadBuffer.startsWith("GPS")) {
+      GPS.listen();
+      HC12.print("Remote GPS Command Received");
+      GPSLocal = false;
+    }
+    Serial.print(HC12ReadBuffer);                   // Send message to screen
+    HC12ReadBuffer = "";                            // Empty Buffer
+    HC12End = false;                                // Reset Flag
+  }  
+}
 
+void readSerialBuffer() {
   while (Serial.available()) {                      // If Arduino's computer rx buffer has data
     byteIn = Serial.read();                         // Store each character in byteIn
     SerialReadBuffer += char(byteIn);               // Write each character of byteIn to SerialReadBuffer
     if (byteIn == '\n')                          // At the end of the line
       serialEnd = true;                             // Set serialEnd flag to true.
   }
-
-  while (GPS.available()) {
-    byteIn = GPS.read();
-    GPSReadBuffer += char(byteIn);
-    if (byteIn == '\n')
-      GPSEnd = true;
-  }
-
   if (serialEnd) {                                  // Check to see if serialEnd flag is true
     if (SerialReadBuffer.startsWith("AT")) {        // Check to see if a command has been sent
       if (SerialReadBuffer.startsWith("AT+B")) {    // If it is a baud change command, delete it immediately
@@ -108,27 +128,15 @@ void loop() {
     HC12.print(SerialReadBuffer);                   // Send text to HC12 to be broadcast
     SerialReadBuffer = "";                          // Clear buffer 2
     serialEnd = false;                              // Reset serialEnd flag
-  }
+  }  
+}
 
-  if (HC12End) {                                    // If HC12End flag is true
-    if (HC12ReadBuffer.startsWith("AT")) {          // Check to see if a command was received
-      digitalWrite(HC12SetPin, LOW);                // If true, enter command mode
-      delay(40);                                    // Delay before writing command
-      HC12.print(HC12ReadBuffer);                   // Send incoming command back to HC12
-      Serial.println(HC12ReadBuffer);               // Send command to serial
-      delay(1000);                                  // Wait 0.5s for reply
-      digitalWrite(HC12SetPin, HIGH);               // Exit command / enter transparent mode
-      delay(80);                                    // Delay before proceeding
-      HC12.println("Remote Command Executed");
-    }
-    if (HC12ReadBuffer.startsWith("GPS")) {
-      GPS.listen();
-      HC12.print("Remote GPS Command Received");
-      GPSLocal = false;
-    }
-    Serial.print(HC12ReadBuffer);                   // Send message to screen
-    HC12ReadBuffer = "";                            // Empty Buffer
-    HC12End = false;                                // Reset Flag
+void readGPS() {
+  while (GPS.available()) {
+    byteIn = GPS.read();
+    GPSReadBuffer += char(byteIn);
+    if (byteIn == '\n')
+      GPSEnd = true;
   }
   if (GPSEnd) {
     
@@ -147,15 +155,12 @@ void loop() {
     }
     GPSReadBuffer = "";                           // Delete unwanted strings
     GPSEnd = false;                                 // Reset GPS
-  }
+  }  
 }
 
 // Open serial communications and wait for port to open:
 void setupSD() {
-  Serial.begin(9600);
-  while (!Serial)
-    ;
-  
+
   // see if the card is present and can be initialized:
   Serial.print("Initializing SD card...");
   if (SD.begin(chipSelect))
