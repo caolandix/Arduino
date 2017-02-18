@@ -6,16 +6,14 @@
  // This is the debug flag that turns on debugging information if needed
  #define _DEBUG
 
- #define MYHIGH   3.3
- #define MYLOW    1.3
-
 // LED Pinouts
-const int pinDCMotor = 13;       // DC motor voltage
+const int pinDCMotor = 11;       // DC motor voltage
 
 
 // Pre-execution initialisation occurs here
 void setup() {
   Serial.begin(9600); 
+  pinMode(pinDCMotor, OUTPUT);
 }
 
 // The main loop
@@ -31,6 +29,10 @@ void loop() {
 // Notes: n/a
 //
 void pulseDCMotor() {
-  analogWrite(A0, 255);
+  analogWrite(pinDCMotor, 255);
+  delay(1000);
+  analogWrite(pinDCMotor, 128);
+  delay(1000);
+  
 }
 

@@ -16,7 +16,7 @@ const int ledColdPin = 7;       // Blue LED pin for temps less than 10C
 
 // Temperature ranges for red and blue LED's
 const float tempHot = 25.0;
-const float tempCold = 10.0;
+const float tempCold = 12.0;
 
 // make it easier to type in unsigned long in the program
 typedef unsigned long ulong;
