@@ -45,30 +45,63 @@ bool GPSLocal = true;                            // send GPS local or remote fla
 SoftwareSerial HC12(HC12TxdPin, HC12RxdPin);
 SoftwareSerial GPS(GPSTxdPin, GPSRxdPin);
 
-// the setup function runs once when you press reset or power the board
+// Function prototypes -- forward declarations to tell the compiler that they're here... Not really needed in Arduino but compiler settings may change in the future. 
+void handleHC12();
+void handleSerialBuffer();
+void handleGPS();
+void setupSD();
+void saveGPSDataSDCard();
+
+//
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Function Name: setup
+// Purpose: Setsup all preliminary initialization needed before entering the primary loop()
+// Inputs: N/A
+// Output: N/A
+// Notes:
+//
 void setup() {
   HC12ReadBuffer.reserve(82);                       // Reserve 82 bytes for message
   SerialReadBuffer.reserve(82);                     // Reserve 82 bytes for message
   GPSReadBuffer.reserve(82);                        // Reserve 82 bytes for longest NMEA sentence
 
+  Serial.begin(9600);                               // Open serial port to computer at 9600 Baud
+
+  // Setup the SD for usage
+  setupSD();                                        // Open ports and setup communication with SDChip
+
+  // Setup the GPS unit for usage
+  GPS.begin(9600);                                  // Open software serial port to GPS at 9600 Baud
+
+  // Setup the HC12 unit for usage
   pinMode(HC12SetPin, OUTPUT);                      // Output High for Transparent / Low for Command
   digitalWrite(HC12SetPin, HIGH);                   // Enter Transparent mode
   delay(80);                                        // 80 ms delay before operation per datasheet
-  Serial.begin(9600);                               // Open serial port to computer at 9600 Baud
-  setupSD();                                        // Open ports and setup communication with SDChip
   HC12.begin(9600);                                 // Open software serial port to HC12 at 9600 Baud
-  GPS.begin(9600);                                  // Open software serial port to GPS at 9600 Baud
   HC12.listen();                                    // Listen to HC12
 }
-
-// the loop function runs over and over again forever
+//
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Function Name: loop
+// Purpose: The main loop of execution
+// Inputs: N/A
+// Output: N/A
+// Notes: 
+//
 void loop() {
-  readHC12();
-  readSerialBuffer();
-  readGPS();
+  handleHC12();
+  handleSerialBuffer();
+  handleGPS();
 }
-
-void readHC12() {
+//
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Function Name: handleHC12
+// Purpose: Reads and manages the data coming from the readHC12
+// Inputs: N/A
+// Output: N/A
+// Notes:
+//
+void handleHC12() {
   while (HC12.available()) {                        // If Arduino's HC12 rx buffer has data
     byteIn = HC12.read();                           // Store each character in byteIn
     HC12ReadBuffer += char(byteIn);                 // Write each character of byteIn to HC12ReadBuffer
@@ -96,8 +129,15 @@ void readHC12() {
     HC12End = false;                                // Reset Flag
   }  
 }
-
-void readSerialBuffer() {
+//
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Function Name: handleSerialBuffer
+// Purpose: Reads and manages the data coming from the serial buffer used for communication between the the GPS and the radio HC12
+// Inputs:
+// Output: N/A
+// Notes:
+//
+void handleSerialBuffer() {
   while (Serial.available()) {                      // If Arduino's computer rx buffer has data
     byteIn = Serial.read();                         // Store each character in byteIn
     SerialReadBuffer += char(byteIn);               // Write each character of byteIn to SerialReadBuffer
@@ -121,7 +161,6 @@ void readSerialBuffer() {
       delay(100);                                   // Delay before proceeding
     }
     if (SerialReadBuffer.startsWith("GPS")) {
-      HC12.print(SerialReadBuffer);
       GPS.listen();
       GPSLocal = true;
     }
@@ -130,8 +169,15 @@ void readSerialBuffer() {
     serialEnd = false;                              // Reset serialEnd flag
   }  
 }
-
-void readGPS() {
+//
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Function Name: handleGPS
+// Purpose: Reads and manages the data coming from the GPS unit
+// Inputs: N/A
+// Output: N/A
+// Notes:
+//
+void handleGPS() {
   while (GPS.available()) {
     byteIn = GPS.read();
     GPSReadBuffer += char(byteIn);
@@ -157,8 +203,15 @@ void readGPS() {
     GPSEnd = false;                                 // Reset GPS
   }  
 }
-
-// Open serial communications and wait for port to open:
+//
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Function Name: setupSD
+// Purpose: Initialises the communication channel to the SD Card. 
+// Inputs: N/A
+// Output: N/A
+// Notes: This is stub code TBH. Because the SDCard is actually a part of the GPS unit, more than likely it will require different
+//        processing however for now it is here to allow development to proceed.
+//
 void setupSD() {
 
   // see if the card is present and can be initialized:
@@ -168,10 +221,19 @@ void setupSD() {
   else
     Serial.println("Card failed, or not present");
 }
-
+//
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Function Name: saveGPSDataSDCard
+// Purpose: Writes the GPS information to the SDCard
+// Inputs: N/A
+// Output: N/A
+// Notes:This is stub code TBH. Because the SDCard is actually a part of the GPS unit, more than likely it will require different
+//        processing however for now it is here to allow development to proceed.
+//
 void saveGPSDataSDCard() {
   // make a string for assembling the data to log:
   String dataString = "";
+  String strFilename = "gps_datalog.txt";
 
   // read three sensors and append to the string:
   for (int analogPin = 0; analogPin < 3; analogPin++) {
@@ -183,7 +245,7 @@ void saveGPSDataSDCard() {
 
   // open the file. note that only one file can be open at a time,
   // so you have to close this one before opening another.
-  File dataFile = SD.open("datalog.txt", FILE_WRITE);
+  File dataFile = SD.open(strFilename, FILE_WRITE);
 
   // if the file is available, write to it:
   if (dataFile) {
@@ -194,5 +256,6 @@ void saveGPSDataSDCard() {
   }
   // if the file isn't open, pop up an error:
   else
-    Serial.println("error opening datalog.txt");
+    Serial.print("error opening ");
+    Serial.println(strFilename);
 }
