@@ -21,7 +21,7 @@ Purpose: Send up in a rocket a GPS unit that transmits Lat/Long and saves more e
 // MISO - pin 12
 // CLK - pin 13
 // CS - pin 4 (for MKRZero SD: SDCARD_SS_PIN) (chipSelect = CS)
-const byte chipSelect = 4;
+const byte chipSelect = 9;
 
 // Begin Pin Declarations
 const byte HC12RxdPin = 4;                          // "RXD" Pin on HC12
