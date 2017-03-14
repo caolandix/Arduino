@@ -49,13 +49,6 @@ bool GPSLocal = true;                            // send GPS local or remote fla
 // Create Software Serial Ports for HC12 & GPS - Software Serial ports Rx and Tx are opposite the HC12 Rxd and Txd
 SoftwareSerial HC12(HC12TxdPin, HC12RxdPin);
 SoftwareSerial GPS(GPSTxdPin, GPSRxdPin);
-
-// Function prototypes -- forward declarations to tell the compiler that they're here... Not really needed in Arduino but compiler settings may change in the future. 
-void handleHC12();
-void handleSerialBuffer();
-void handleGPS();
-void setupSD();
-void saveGPSDataSDCard();
 //
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Function Name: setup
@@ -69,27 +62,7 @@ void setup() {
   SerialReadBuffer.reserve(82);                     // Reserve 82 bytes for message
   GPSReadBuffer.reserve(82);                        // Reserve 82 bytes for longest NMEA sentence
 
-  Serial.begin(230400); // this baud rate doesn't actually matter!
-  // wait for leo to be ready
-  /*
-   * 
-  while (!Serial)
-    ;
-
-  // Setup the SD for usage
-  // Open ports and setup communication with SDChip
-  //setupSD();
-        
-  GPS.begin(9600);
-  delay(2000);
-  Serial.println("Get version!");
-  GPS.println(PMTK_Q_RELEASE);
-  
-  // you can send various commands to get it started
-  GPS.println(PMTK_SET_NMEA_OUTPUT_RMCGGA);
-  // GPS.println(PMTK_SET_NMEA_OUTPUT_ALLDATA);
-  GPS.println(PMTK_SET_NMEA_UPDATE_1HZ);
-  */
+  Serial.begin(230400);
   setupGPS();
   // setupHC12();
 }
@@ -113,7 +86,6 @@ void setupGPS() {
         
   GPS.begin(9600);
   delay(2000);
-  Serial.println("Get version!");
   GPS.println(PMTK_Q_RELEASE);
   
   // you can send various commands to get it started
@@ -244,18 +216,10 @@ void handleGPS() {
   while (GPS.available()) {
     byteIn = GPS.read();
     GPSReadBuffer += char(byteIn);
-    if (byteIn == '\n')
-      GPSEnd = true;
-  }
-  if (GPSEnd) {
-    
-    // Options include GPRMC, GPGGA, GPGLL, etc...
-    //if (GPSReadBuffer.startsWith("$GPGGA")) {       // Look for target GPS sentence
+    if (byteIn == '\n') {
       if (GPSLocal) {
-        Serial.print("Local GPS Reading: ");
-        Serial.println(GPSReadBuffer);
+        Serial.print(GPSReadBuffer);
         parseGPSSentence(GPSReadBuffer.c_str());
-        
       }
       else {
         HC12.print("Remote GPS:");                  // Local Arduino responds to remote request
@@ -263,9 +227,8 @@ void handleGPS() {
       }
       // saveGPSDataSDCard();                          // Save GPS info to SDMicro
       // HC12.listen();                                // Found target GPS sentence, start listening to HC12 again
-    //}
-    GPSReadBuffer = "";                           // Delete unwanted strings
-    GPSEnd = false;                                 // Reset GPS
+      GPSReadBuffer = "";                           // Delete unwanted strings
+    }
   }  
 }
 //
