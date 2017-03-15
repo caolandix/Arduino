@@ -3,11 +3,8 @@
  * Phys 222 Lab 5 - Winter 2017
  */
 
- // This is the debug flag that turns on debugging information if needed
- #define _DEBUG
-
 // LED Pinouts
-const int pinDCMotor = 11;       // DC motor voltage
+const int pinDCMotor = 9;       // DC motor voltage
 
 
 // Pre-execution initialisation occurs here
@@ -31,8 +28,7 @@ void loop() {
 void pulseDCMotor() {
   analogWrite(pinDCMotor, 255);
   delay(1000);
-  analogWrite(pinDCMotor, 128);
+  analogWrite(pinDCMotor, 0);
   delay(1000);
-  
 }
 
