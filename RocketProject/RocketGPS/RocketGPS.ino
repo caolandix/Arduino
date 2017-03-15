@@ -12,6 +12,7 @@ Purpose: Send up in a rocket a GPS unit that transmits Lat/Long and saves more e
 #include <SPI.h>
 #include <SD.h>
 
+// 
 #define PMTK_SET_NMEA_UPDATE_1HZ  "$PMTK220,1000*1F"
 #define PMTK_SET_NMEA_UPDATE_5HZ  "$PMTK220,200*2C"
 #define PMTK_SET_NMEA_UPDATE_10HZ "$PMTK220,100*2F"
@@ -29,11 +30,28 @@ Purpose: Send up in a rocket a GPS unit that transmits Lat/Long and saves more e
 #define PMTK_SET_NMEA_OUTPUT_OFF "$PMTK314,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0*28"
 #define PMTK_Q_RELEASE "$PMTK605*31"
 
+#define NMEA_DELIMITER  ','
+
+// SD related settings
+#define LOG_FIXONLY false  
+
+struct GPSInfo {
+  String strLatitude;
+  String strLongitude;
+  String strTimestamp;
+};
+
+// Error types we report on
+enum { ERR_UNKNOWN = 1, ERR_SD_INIT, ERR_SD_CREATEFILE, ERR_SD_WRITEFILE};
+
+// HW pins used int he Arduino
 const byte HC12RxdPin = 4;                      // "RXD" Pin on HC12
 const byte HC12TxdPin = 5;                      // "TXD" Pin on HC12
 const byte HC12SetPin = 6;                      // "SET" Pin on HC12
 const byte GPSRxdPin = 7;                       // "RXD" on GPS (if available)
 const byte GPSTxdPin = 8;                       // "TXD" on GPS
+const byte GPSchipSelect = 10;
+const byte GPSledPin = 13;
 
 // Begin variable declarations
 char byteIn;                                        // Temporary variable
@@ -45,6 +63,8 @@ bool HC12End = false;                            // Flag for End of HC12 String
 bool GPSEnd = false;                             // Flag for End of GPS String
 bool commandMode = false;                        // Send AT commands to remote receivers
 bool GPSLocal = true;                            // send GPS local or remote flag
+GPSInfo g_gpsInfo;                              // GLobal structure used to hold GPS information
+File logfile;                                   // The global file descriptor for the logfile
 
 // Create Software Serial Ports for HC12 & GPS - Software Serial ports Rx and Tx are opposite the HC12 Rxd and Txd
 SoftwareSerial HC12(HC12TxdPin, HC12RxdPin);
@@ -58,17 +78,99 @@ SoftwareSerial GPS(GPSTxdPin, GPSRxdPin);
 // Notes:
 //
 void setup() {
-  HC12ReadBuffer.reserve(82);                       // Reserve 82 bytes for message
-  SerialReadBuffer.reserve(82);                     // Reserve 82 bytes for message
+  //HC12ReadBuffer.reserve(82);                       // Reserve 82 bytes for message
+  //SerialReadBuffer.reserve(82);                     // Reserve 82 bytes for message
   GPSReadBuffer.reserve(82);                        // Reserve 82 bytes for longest NMEA sentence
 
+  // Setup the serial port to be fast enough to handle the incoming data from the GPS and give it time to process it
   Serial.begin(230400);
+  setupSD();
   setupGPS();
   // setupHC12();
 }
 //
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Function Name: 
+// Function Name: blinkError()
+// Purpose: Sends out an error code to the error LED on the GPS board
+// Inputs: 
+//    - errno: the error code being registered
+// Output: N/A
+// Notes: 
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+void handleBlinkError(uint8_t errCode, const char *pFilename = NULL) {  
+  switch (errCode) {
+    case ERR_SD_INIT:
+      Serial.println("ERROR: SD Card: initialisation failed!");
+      break;
+    case ERR_SD_CREATEFILE:
+      if (pFilename) {
+        Serial.print("ERROR: SD Card: Failed to create a file: ");
+        Serial.println(pFilename);
+      }
+      break;
+    case ERR_SD_WRITEFILE:
+      if (pFilename) {
+        Serial.print("ERROR: SD Card: Failed to write to a file: ");
+        Serial.println(pFilename);
+      }
+      break;
+    default:
+      Serial.println("ERROR: Unknown error occurred");
+  }
+
+  // set the blinking code
+  while (true) {
+    for (uint8_t i = 0; i < errCode; i++) {
+      digitalWrite(GPSledPin, HIGH);
+      delay(100);
+      digitalWrite(GPSledPin, LOW);
+      delay(100);
+    }
+    for (uint8_t i = errCode; i < 10; i++) {
+      delay(200);
+    }
+  }
+}
+//
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Function Name: setupSD()
+// Purpose: initialises the SD
+// Inputs: N/A
+// Output: N/A
+// Notes: 
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+void setupSD() {
+  pinMode(GPSledPin, OUTPUT);
+
+  // make sure that the default chip select pin is set to output, even if you don't use it:
+  pinMode(GPSchipSelect, OUTPUT);
+  
+  // see if the card is present and can be initialized:
+  if (!SD.begin(GPSchipSelect, 11, 12, 13)) {
+    handleBlinkError(ERR_SD_INIT);
+  }
+  char filename[15];
+  strcpy(filename, "GPSLOG00.TXT");
+  for (uint8_t i = 0; i < 100; i++) {
+    filename[6] = '0' + i / 10;
+    filename[7] = '0' + i % 10;
+    
+    // create if does not exist, do not open existing, write, sync after write
+    if (!SD.exists(filename))
+      break;
+  }
+
+  logfile = SD.open(filename, FILE_WRITE);
+  if (!logfile)
+    handleBlinkError(ERR_SD_CREATEFILE, filename);
+  Serial.print("Writing to ");
+  Serial.println(filename);
+}
+//
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Function Name: setupGPS()
 // Purpose: 
 // Inputs:
 // Output: 
@@ -79,11 +181,6 @@ void setupGPS() {
   // wait for leo to be ready
   while (!Serial)
     ;
-
-  // Setup the SD for usage
-  // Open ports and setup communication with SDChip
-  //setupSD();
-        
   GPS.begin(9600);
   delay(2000);
   GPS.println(PMTK_Q_RELEASE);
@@ -94,8 +191,374 @@ void setupGPS() {
   GPS.println(PMTK_SET_NMEA_UPDATE_1HZ);
 }
 //
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Function Name: handleGPS
+// Purpose: Reads and manages the data coming from the GPS unit
+// Inputs: N/A
+// Output: N/A
+// Notes:
+//
+void handleGPS() {
+  
+  while (GPS.available()) {
+    byteIn = GPS.read();
+    GPSReadBuffer += char(byteIn);
+    if (byteIn == '\n') {
+      if (GPSLocal) {
+        Serial.print(GPSReadBuffer);
+        parseGPSSentence(GPSReadBuffer.c_str());
+      }
+      else {
+        //HC12.print("Remote GPS:");                  // Local Arduino responds to remote request
+        // HC12.print(GPSReadBuffer);                  // Sends local GPS to remote
+      }
+      saveGPSDataSDCard();                          // Save GPS info to SDMicro
+      // HC12.listen();                                // Found target GPS sentence, start listening to HC12 again
+      GPSReadBuffer = "";                           // Delete unwanted strings
+    }
+  }  
+}
+//
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Function Name: saveGPSDataSDCard
+// Purpose: Writes the GPS information to the SDCard
+// Inputs: N/A
+// Output: N/A
+// Notes:This is stub code TBH. Because the SDCard is actually a part of the GPS unit, more than likely it will require different
+//        processing however for now it is here to allow development to proceed.
+//
+void saveGPSDataSDCard() {
+  char *pBuffer = NULL;
+  uint8_t strlength = 0;
+
+  pBuffer = g_gpsInfo.strTimestamp.c_str();
+  strlength = strlen(pBuffer);    
+  if (strlength != logfile.write((uint8_t *)pBuffer, strlength))    //write the string to the SD file
+    handleBlinkError(ERR_SD_WRITEFILE);        
+
+  pBuffer = g_gpsInfo.strLatitude.c_str();
+  strlength = strlen(pBuffer);  
+  if (strlength != logfile.write((uint8_t *)pBuffer, strlength))    //write the string to the SD file
+    handleBlinkError(ERR_SD_WRITEFILE);
+
+  pBuffer = g_gpsInfo.strLongitude.c_str();
+  strlength = strlen(pBuffer);    
+  if (strlength != logfile.write((uint8_t *)pBuffer, strlength))    //write the string to the SD file
+    handleBlinkError(ERR_SD_WRITEFILE);
+  if (strstr(pBuffer, "RMC"))
+    logfile.flush();    
+}
+//
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Function Name: parseHex
+// Purpose: read a Hex value and return the decimal equivalent
+// Inputs: N/A
+// Output: N/A
+// Notes:
+//
+uint8_t parseHex(const char c) {
+    if (c < '0')
+      return 0;
+    if (c <= '9')
+      return c - '0';
+    if (c < 'A')
+       return 0;
+    if (c <= 'F')
+       return (c - 'A') + 10;
+    return 0;
+}
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Function Name: checksumPassed
+// Purpose: Looks for a checksum in the data stream to make sure it is a valid line in case there is a failure to receive a full sentence
+// Inputs: N/A
+// Output: N/A
+// Notes:
+//
+bool checksumPassed(const char *GPSReadBuffer) {
+  
+  // first look if we even have one
+  if (GPSReadBuffer[strlen(GPSReadBuffer) - 4] == '*') {
+
+    // parse the data looking for a checksum
+    uint16_t sum = parseHex(GPSReadBuffer[strlen(GPSReadBuffer) - 3]) * 16;
+    sum += parseHex(GPSReadBuffer[strlen(GPSReadBuffer) - 2]);
+    
+    // check checksum 
+    for (uint8_t i = 2; i < (strlen(GPSReadBuffer) - 4); i++)
+      sum ^= GPSReadBuffer[i];
+    if (sum != 0)
+      return false;
+  }
+  return true;
+}
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Function Name: parseGPSSentence
+// Purpose: Parses out the GPS Sentences and extracts the meaningful data for display
+// Inputs: 
+//    - GPSReadBuffer: the buffer of raw data read in by the GPS module
+// Output: N/A
+// Notes:
+//
+bool parseGPSSentence(const char *GPSReadBuffer) {
+  char *pBuffer = NULL;
+
+  // if we have an invalid pointer then exit because it's an error
+  if (!GPSReadBuffer)
+    return false;
+
+  pBuffer = GPSReadBuffer;
+  
+  // Verify the data to see if we received a checksum
+  if (checksumPassed(GPSReadBuffer)) {
+        
+    // Handle the $GPGGA string
+    if (strstr(GPSReadBuffer, "$GPGGA"))
+      parseGPGGA(pBuffer);
+    else if (strstr(GPSReadBuffer, "$GPRMC"))
+      parseGPRMC(pBuffer);
+    return true;
+  }
+  return false;
+}
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Function Name: parseGPRMC
+// Purpose: Parses out the GPS GPRMC sentence and extracts the meaningful data for display
+// Inputs: 
+//    - pBuffer: the buffer of raw data read in by the GPS module
+// Output: N/A
+// Notes:
+//
+void parseGPRMC(const char *pBuffer) {
+  uint8_t hour, minute, seconds;
+  uint16_t milliseconds;
+  bool bActive;
+  char degreebuff[10];  
+  char lat, lon, mag;
+  float latitudeDegrees, longitudeDegrees, latitude, longitude, timef;
+  int32_t latitude_fixed, longitude_fixed, degree;
+  uint32_t time;
+  long minutes;
+  
+  // get time
+  pBuffer = strchr(pBuffer, ',') + 1;
+  timef = atof(pBuffer);
+  time = timef;
+  hour = time / 10000;
+  minute = (time % 10000) / 100;
+  seconds = (time % 100);
+  milliseconds = fmod(timef, 1.0) * 1000;
+
+  // parse out Active (A) or void (V)
+  pBuffer = strchr(pBuffer, NMEA_DELIMITER) + 1;
+  if (NMEA_DELIMITER != *pBuffer)
+    bActive = (pBuffer[0] == 'A') ? true : false;
+  
+  // parse out latitude
+  pBuffer = strchr(pBuffer, NMEA_DELIMITER) + 1;
+  if (NMEA_DELIMITER != *pBuffer) {
+    strncpy(degreebuff, pBuffer, 2);
+    pBuffer += 2;
+    degreebuff[2] = '\0';
+    degree = atol(degreebuff) * 10000000;
+
+    // minutes
+    strncpy(degreebuff, pBuffer, 2);
+
+    // skip decimal point
+    pBuffer += 3;
+    strncpy(degreebuff + 2, pBuffer, 4);
+    degreebuff[6] = '\0';
+    minutes = 50 * atol(degreebuff) / 3;
+    latitude_fixed = degree + minutes;
+    latitude = degree / 100000 + minutes * 0.000006F;
+    latitudeDegrees = (latitude - 100 * int(latitude / 100)) / 60.0;
+    latitudeDegrees += int(latitude / 100);
+  }
+  
+  pBuffer = strchr(pBuffer, NMEA_DELIMITER) + 1;
+  if (NMEA_DELIMITER != *pBuffer) {
+    if (pBuffer[0] == 'S')
+      latitudeDegrees *= -1.0;
+    if (pBuffer[0] == 'N')
+      lat = 'N';
+    else if (pBuffer[0] == 'S')
+      lat = 'S';
+    else if (pBuffer[0] == NMEA_DELIMITER)
+      lat = 0;
+    else
+      return false;
+  }
+  
+  // parse out longitude
+  pBuffer = strchr(pBuffer, NMEA_DELIMITER) + 1;
+  if (NMEA_DELIMITER != *pBuffer) {
+    strncpy(degreebuff, pBuffer, 3);
+    pBuffer += 3;
+    degreebuff[3] = '\0';
+    degree = atol(degreebuff) * 10000000;
+
+    // minutes
+    strncpy(degreebuff, pBuffer, 2);
+
+    // skip decimal point
+    pBuffer += 3;
+    strncpy(degreebuff + 2, pBuffer, 4);
+    degreebuff[6] = '\0';
+    minutes = 50 * atol(degreebuff) / 3;
+    longitude_fixed = degree + minutes;
+    longitude = degree / 100000 + minutes * 0.000006F;
+    longitudeDegrees = (longitude - 100 * int(longitude / 100)) / 60.0;
+    longitudeDegrees += int(longitude / 100);
+  }
+  
+  pBuffer = strchr(pBuffer, NMEA_DELIMITER) + 1;
+  if (NMEA_DELIMITER != *pBuffer) {
+    if (pBuffer[0] == 'W')
+      longitudeDegrees *= -1.0;
+    if (pBuffer[0] == 'W')
+      lon = 'W';
+    else if (pBuffer[0] == 'E')
+      lon = 'E';
+    else if (pBuffer[0] == NMEA_DELIMITER)
+      lon = 0;
+    else
+      return false;
+  }    
+}
+/*
+$GPRMC,123519,A,4807.038,N,01131.000,E,022.4,084.4,230394,003.1,W*6A
+
+Where:
+     RMC          Recommended Minimum sentence C
+     123519       Fix taken at 12:35:19 UTC
+     A            Status A=active or V=Void.
+     4807.038,N   Latitude 48 deg 07.038' N
+     01131.000,E  Longitude 11 deg 31.000' E
+     022.4        Speed over the ground in knots
+     084.4        Track angle in degrees True
+     230394       Date - 23rd of March 1994
+     003.1,W      Magnetic Variation
+     *6A          The checksum data, always begins with *
+*/
+void parseGPGGA(const char *pBuffer) {
+  float geoIDHeight, altitude, HDOP, latitudeDegrees, longitudeDegrees, latitude, longitude;
+  char degreebuff[10];  
+  char lat, lon, mag;
+  uint8_t hour, minute, seconds, year, month, day, fixquality, satellites;
+  uint16_t milliseconds;
+  int32_t latitude_fixed, longitude_fixed, degree;
+  long minutes;
+
+  // get time
+  pBuffer = strchr(pBuffer, NMEA_DELIMITER) + 1;
+  float timef = atof(pBuffer);
+  uint32_t time = timef;
+  hour = time / 10000;
+  minute = (time % 10000) / 100;
+  seconds = (time % 100);
+
+  milliseconds = fmod(timef, 1.0) * 1000;
+
+  // parse out latitude
+  pBuffer = strchr(pBuffer, NMEA_DELIMITER) + 1;
+  if (NMEA_DELIMITER != *pBuffer) {
+    strncpy(degreebuff, pBuffer, 2);
+    pBuffer += 2;
+    degreebuff[2] = '\0';
+    degree = atol(degreebuff) * 10000000;
+
+    // minutes
+    strncpy(degreebuff, pBuffer, 2);
+
+    // skip decimal point
+    pBuffer += 3;
+    strncpy(degreebuff + 2, pBuffer, 4);
+    degreebuff[6] = '\0';
+    minutes = 50 * atol(degreebuff) / 3;
+    latitude_fixed = degree + minutes;
+    latitude = degree / 100000 + minutes * 0.000006F;
+    latitudeDegrees = (latitude - 100 * int(latitude / 100)) / 60.0;
+    latitudeDegrees += int(latitude/100);
+  }
+  
+  pBuffer = strchr(pBuffer, NMEA_DELIMITER) + 1;
+  if (NMEA_DELIMITER != *pBuffer) {
+    if (pBuffer[0] == 'S')
+      latitudeDegrees *= -1.0;
+    if (pBuffer[0] == 'N')
+      lat = 'N';
+    else if (pBuffer[0] == 'S')
+      lat = 'S';
+    else if (pBuffer[0] == NMEA_DELIMITER)
+      lat = 0;
+    else
+      return false;
+  }
+  
+  // parse out longitude
+  pBuffer = strchr(pBuffer, NMEA_DELIMITER) + 1;
+  if (NMEA_DELIMITER != *pBuffer) {
+    strncpy(degreebuff, pBuffer, 3);
+    pBuffer += 3;
+    degreebuff[3] = '\0';
+    degree = atol(degreebuff) * 10000000;
+
+    // minutes
+    strncpy(degreebuff, pBuffer, 2);
+
+    // skip decimal point
+    pBuffer += 3;
+    strncpy(degreebuff + 2, pBuffer, 4);
+    degreebuff[6] = '\0';
+    minutes = 50 * atol(degreebuff) / 3;
+    longitude_fixed = degree + minutes;
+    longitude = degree / 100000 + minutes * 0.000006F;
+    longitudeDegrees = (longitude - 100 * int(longitude / 100)) / 60.0;
+    longitudeDegrees += int(longitude / 100);
+  }
+  
+  pBuffer = strchr(pBuffer, NMEA_DELIMITER) + 1;
+  if (NMEA_DELIMITER != *pBuffer) {
+    if (pBuffer[0] == 'W')
+      longitudeDegrees *= -1.0;
+    if (pBuffer[0] == 'W')
+      lon = 'W';
+    else if (pBuffer[0] == 'E')
+      lon = 'E';
+    else if (pBuffer[0] == NMEA_DELIMITER)
+      lon = 0;
+    else
+      return false;
+  }
+
+  pBuffer = strchr(pBuffer, NMEA_DELIMITER) + 1;
+  if (NMEA_DELIMITER != *pBuffer)
+    fixquality = atoi(pBuffer);
+
+  pBuffer = strchr(pBuffer, NMEA_DELIMITER) + 1;
+  if (NMEA_DELIMITER != *pBuffer)
+    satellites = atoi(pBuffer);
+
+  pBuffer = strchr(pBuffer, NMEA_DELIMITER) + 1;
+  if (NMEA_DELIMITER != *pBuffer)
+    HDOP = atof(pBuffer);
+  
+  pBuffer = strchr(pBuffer, NMEA_DELIMITER) + 1;
+  if (NMEA_DELIMITER != *pBuffer)
+    altitude = atof(pBuffer);
+    
+  pBuffer = strchr(pBuffer, NMEA_DELIMITER) + 1;
+  pBuffer = strchr(pBuffer, NMEA_DELIMITER) + 1;
+  if (NMEA_DELIMITER != *pBuffer)
+    geoIDHeight = atof(pBuffer);
+}
+
+//
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Function Name: 
+// Function Name: setupHC12()
 // Purpose: 
 // Inputs:
 // Output: 
@@ -109,24 +572,6 @@ void setupHC12() {
   delay(80);                                        // 80 ms delay before operation per datasheet
   HC12.begin(9600);                                 // Open software serial port to HC12 at 9600 Baud
   HC12.listen();                                    // Listen to HC12
-}
-//
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Function Name: loop
-// Purpose: The main loop of execution
-// Inputs: N/A
-// Output: N/A
-// Notes: 
-//
-void loop() {
-  if (Serial.available()) {
-   char c = Serial.read();
-   Serial.write(c);
-   GPS.write(c);
-  }
-  // handleHC12();
-  //handleSerialBuffer();
-  handleGPS();
 }
 //
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -206,402 +651,21 @@ void handleSerialBuffer() {
 }
 //
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Function Name: handleGPS
-// Purpose: Reads and manages the data coming from the GPS unit
+// Function Name: loop
+// Purpose: The main loop of execution
 // Inputs: N/A
 // Output: N/A
-// Notes:
+// Notes: 
 //
-void handleGPS() {
-  while (GPS.available()) {
-    byteIn = GPS.read();
-    GPSReadBuffer += char(byteIn);
-    if (byteIn == '\n') {
-      if (GPSLocal) {
-        Serial.print(GPSReadBuffer);
-        parseGPSSentence(GPSReadBuffer.c_str());
-      }
-      else {
-        HC12.print("Remote GPS:");                  // Local Arduino responds to remote request
-        HC12.print(GPSReadBuffer);                  // Sends local GPS to remote
-      }
-      // saveGPSDataSDCard();                          // Save GPS info to SDMicro
-      // HC12.listen();                                // Found target GPS sentence, start listening to HC12 again
-      GPSReadBuffer = "";                           // Delete unwanted strings
-    }
-  }  
-}
-//
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Function Name: parseHex
-// Purpose: read a Hex value and return the decimal equivalent
-// Inputs: N/A
-// Output: N/A
-// Notes:
-//
-uint8_t parseHex(const char c) {
-    if (c < '0')
-      return 0;
-    if (c <= '9')
-      return c - '0';
-    if (c < 'A')
-       return 0;
-    if (c <= 'F')
-       return (c - 'A') + 10;
-    return 0;
-}
-//
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Function Name: checksumPassed
-// Purpose: Looks for a checksum in the data stream to make sure it is a valid line in case there is a failure to receive a full sentence
-// Inputs: N/A
-// Output: N/A
-// Notes:
-//
-bool checksumPassed(const char *GPSReadBuffer) {
-  
-  // first look if we even have one
-  if (GPSReadBuffer[strlen(GPSReadBuffer) - 4] == '*') {
+void loop() {
 
-    // parse the data looking for a checksum
-    uint16_t sum = parseHex(GPSReadBuffer[strlen(GPSReadBuffer) - 3]) * 16;
-    sum += parseHex(GPSReadBuffer[strlen(GPSReadBuffer) - 2]);
-    
-    // check checksum 
-    for (uint8_t i = 2; i < (strlen(GPSReadBuffer) - 4); i++)
-      sum ^= GPSReadBuffer[i];
-    if (sum != 0)
-      return false;
+  // Read the serial
+  if (Serial.available()) {
+   char c = Serial.read();
+   Serial.write(c);
+   GPS.write(c);
   }
-  return true;
-}
-//
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Function Name: parseGPSSentence
-// Purpose: Parses out the GPS Sentences and extracts the meaningful data for display
-// Inputs: 
-//    - GPSReadBuffer: the buffer of raw data read in by the GPS module
-// Output: N/A
-// Notes:
-//
-bool parseGPSSentence(const char *GPSReadBuffer) {
-  char *pBuffer = NULL;
-  if (!GPSReadBuffer)
-    return false;
-
-  pBuffer = GPSReadBuffer;
-  
-  // Verify the data to see if we received a checksum
-  if (checksumPassed(GPSReadBuffer)) {
-        
-    // Handle the $GPGGA string
-    if (strstr(GPSReadBuffer, "$GPGGA"))
-      parseGPGGA(pBuffer);
-    else if (strstr(GPSReadBuffer, "$GPRMC"))
-      parseGPRMC(pBuffer);
-    return true;
-  }
-  return false;
-}
-//
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Function Name: parseGPRMC
-// Purpose: Parses out the GPS GPRMC sentence and extracts the meaningful data for display
-// Inputs: 
-//    - pBuffer: the buffer of raw data read in by the GPS module
-// Output: N/A
-// Notes:
-//
-void parseGPRMC(const char *pBuffer) {
-  uint8_t hour, minute, seconds;
-  uint16_t milliseconds;
-  bool bActive;
-  char degreebuff[10];  
-  char lat, lon, mag;
-  float latitudeDegrees, longitudeDegrees, latitude, longitude;
-  int32_t latitude_fixed, longitude_fixed, degree;
-  long minutes;
-  
-  // get time
-  pBuffer = strchr(pBuffer, ',') + 1;
-  float timef = atof(pBuffer);
-  uint32_t time = timef;
-  hour = time / 10000;
-  minute = (time % 10000) / 100;
-  seconds = (time % 100);
-  milliseconds = fmod(timef, 1.0) * 1000;
-
-  // parse out Active (A) or void (V)
-  pBuffer = strchr(pBuffer, ',') + 1;
-  if (',' != *pBuffer)
-    bActive = (pBuffer[0] == 'A') ? true : false;
-  
-  // parse out latitude
-  pBuffer = strchr(pBuffer, ',')+1;
-  if (',' != *pBuffer) {
-    strncpy(degreebuff, pBuffer, 2);
-    pBuffer += 2;
-    degreebuff[2] = '\0';
-    degree = atol(degreebuff) * 10000000;
-
-    // minutes
-    strncpy(degreebuff, pBuffer, 2);
-
-    // skip decimal point
-    pBuffer += 3;
-    strncpy(degreebuff + 2, pBuffer, 4);
-    degreebuff[6] = '\0';
-    minutes = 50 * atol(degreebuff) / 3;
-    latitude_fixed = degree + minutes;
-    latitude = degree / 100000 + minutes * 0.000006F;
-    latitudeDegrees = (latitude-100*int(latitude/100))/60.0;
-    latitudeDegrees += int(latitude/100);
-  }
-  
-  pBuffer = strchr(pBuffer, ',') + 1;
-  if (',' != *pBuffer) {
-    if (pBuffer[0] == 'S')
-      latitudeDegrees *= -1.0;
-    if (pBuffer[0] == 'N')
-      lat = 'N';
-    else if (pBuffer[0] == 'S')
-      lat = 'S';
-    else if (pBuffer[0] == ',')
-      lat = 0;
-    else
-      return false;
-  }
-  
-  // parse out longitude
-  pBuffer = strchr(pBuffer, ',') + 1;
-  if (',' != *pBuffer) {
-    strncpy(degreebuff, pBuffer, 3);
-    pBuffer += 3;
-    degreebuff[3] = '\0';
-    degree = atol(degreebuff) * 10000000;
-
-    // minutes
-    strncpy(degreebuff, pBuffer, 2);
-
-    // skip decimal point
-    pBuffer += 3;
-    strncpy(degreebuff + 2, pBuffer, 4);
-    degreebuff[6] = '\0';
-    minutes = 50 * atol(degreebuff) / 3;
-    longitude_fixed = degree + minutes;
-    longitude = degree / 100000 + minutes * 0.000006F;
-    longitudeDegrees = (longitude - 100 * int(longitude / 100)) / 60.0;
-    longitudeDegrees += int(longitude / 100);
-  }
-  
-  pBuffer = strchr(pBuffer, ',') + 1;
-  if (',' != *pBuffer) {
-    if (pBuffer[0] == 'W')
-      longitudeDegrees *= -1.0;
-    if (pBuffer[0] == 'W')
-      lon = 'W';
-    else if (pBuffer[0] == 'E')
-      lon = 'E';
-    else if (pBuffer[0] == ',')
-      lon = 0;
-    else
-      return false;
-  }    
-}
-/*
-$GPRMC,123519,A,4807.038,N,01131.000,E,022.4,084.4,230394,003.1,W*6A
-
-Where:
-     RMC          Recommended Minimum sentence C
-     123519       Fix taken at 12:35:19 UTC
-     A            Status A=active or V=Void.
-     4807.038,N   Latitude 48 deg 07.038' N
-     01131.000,E  Longitude 11 deg 31.000' E
-     022.4        Speed over the ground in knots
-     084.4        Track angle in degrees True
-     230394       Date - 23rd of March 1994
-     003.1,W      Magnetic Variation
-     *6A          The checksum data, always begins with *
-*/
-void parseGPGGA(const char *pBuffer) {
-  float geoIDHeight, altitude, HDOP, latitudeDegrees, longitudeDegrees, latitude, longitude;
-  char degreebuff[10];  
-  char lat, lon, mag;
-  uint8_t hour, minute, seconds, year, month, day, fixquality, satellites;
-  uint16_t milliseconds;
-  int32_t latitude_fixed, longitude_fixed, degree;
-  long minutes;
-
-  // get time
-  pBuffer = strchr(pBuffer, ',') + 1;
-  float timef = atof(pBuffer);
-  uint32_t time = timef;
-  hour = time / 10000;
-  minute = (time % 10000) / 100;
-  seconds = (time % 100);
-
-  milliseconds = fmod(timef, 1.0) * 1000;
-
-  // parse out latitude
-  pBuffer = strchr(pBuffer, ',')+1;
-  if (',' != *pBuffer) {
-    strncpy(degreebuff, pBuffer, 2);
-    pBuffer += 2;
-    degreebuff[2] = '\0';
-    degree = atol(degreebuff) * 10000000;
-
-    // minutes
-    strncpy(degreebuff, pBuffer, 2);
-
-    // skip decimal point
-    pBuffer += 3;
-    strncpy(degreebuff + 2, pBuffer, 4);
-    degreebuff[6] = '\0';
-    minutes = 50 * atol(degreebuff) / 3;
-    latitude_fixed = degree + minutes;
-    latitude = degree / 100000 + minutes * 0.000006F;
-    latitudeDegrees = (latitude-100*int(latitude/100))/60.0;
-    latitudeDegrees += int(latitude/100);
-  }
-  
-  pBuffer = strchr(pBuffer, ',') + 1;
-  if (',' != *pBuffer) {
-    if (pBuffer[0] == 'S')
-      latitudeDegrees *= -1.0;
-    if (pBuffer[0] == 'N')
-      lat = 'N';
-    else if (pBuffer[0] == 'S')
-      lat = 'S';
-    else if (pBuffer[0] == ',')
-      lat = 0;
-    else
-      return false;
-  }
-  
-  // parse out longitude
-  pBuffer = strchr(pBuffer, ',') + 1;
-  if (',' != *pBuffer) {
-    strncpy(degreebuff, pBuffer, 3);
-    pBuffer += 3;
-    degreebuff[3] = '\0';
-    degree = atol(degreebuff) * 10000000;
-
-    // minutes
-    strncpy(degreebuff, pBuffer, 2);
-
-    // skip decimal point
-    pBuffer += 3;
-    strncpy(degreebuff + 2, pBuffer, 4);
-    degreebuff[6] = '\0';
-    minutes = 50 * atol(degreebuff) / 3;
-    longitude_fixed = degree + minutes;
-    longitude = degree / 100000 + minutes * 0.000006F;
-    longitudeDegrees = (longitude - 100 * int(longitude / 100)) / 60.0;
-    longitudeDegrees += int(longitude / 100);
-  }
-  
-  pBuffer = strchr(pBuffer, ',') + 1;
-  if (',' != *pBuffer) {
-    if (pBuffer[0] == 'W')
-      longitudeDegrees *= -1.0;
-    if (pBuffer[0] == 'W')
-      lon = 'W';
-    else if (pBuffer[0] == 'E')
-      lon = 'E';
-    else if (pBuffer[0] == ',')
-      lon = 0;
-    else
-      return false;
-  }
-
-  pBuffer = strchr(pBuffer, ',') + 1;
-  if (',' != *pBuffer)
-    fixquality = atoi(pBuffer);
-
-  pBuffer = strchr(pBuffer, ',') + 1;
-  if (',' != *pBuffer)
-    satellites = atoi(pBuffer);
-
-  pBuffer = strchr(pBuffer, ',') + 1;
-  if (',' != *pBuffer)
-    HDOP = atof(pBuffer);
-  
-  pBuffer = strchr(pBuffer, ',') + 1;
-  if (',' != *pBuffer)
-    altitude = atof(pBuffer);
-  
-  pBuffer = strchr(pBuffer, ',') + 1;
-  pBuffer = strchr(pBuffer, ',') + 1;
-  if (',' != *pBuffer)
-    geoIDHeight = atof(pBuffer);
-
-  Serial.print("Latitude (deg): ");
-  Serial.print(latitudeDegrees);
-  Serial.println(lat);
-  Serial.print("Longitude (deg): ");
-  Serial.print(longitudeDegrees);
-  Serial.println(lon);  
-  Serial.print("geoIDHeight: ");
-  Serial.println(geoIDHeight);
-  Serial.print("Altitude (m): ");
-  Serial.println(altitude);
-  Serial.print("fixquality: ");
-  Serial.println(fixquality);
-  Serial.print("satellites: ");
-  Serial.println(satellites);
-  Serial.print("HDOP: ");
-  Serial.println(HDOP);
-}
-//
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Function Name: setupSD
-// Purpose: Initialises the communication channel to the SD Card. 
-// Inputs: N/A
-// Output: N/A
-// Notes: This is stub code TBH. Because the SDCard is actually a part of the GPS unit, more than likely it will require different
-//        processing however for now it is here to allow development to proceed.
-//
-void setupSD() {
-
-  // see if the card is present and can be initialized:
-  Serial.print("Initializing SD card...");
-
-}
-//
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Function Name: saveGPSDataSDCard
-// Purpose: Writes the GPS information to the SDCard
-// Inputs: N/A
-// Output: N/A
-// Notes:This is stub code TBH. Because the SDCard is actually a part of the GPS unit, more than likely it will require different
-//        processing however for now it is here to allow development to proceed.
-//
-void saveGPSDataSDCard() {
-  // make a string for assembling the data to log:
-  String dataString = "";
-  String strFilename = "gps_datalog.txt";
-
-  // read three sensors and append to the string:
-  for (int analogPin = 0; analogPin < 3; analogPin++) {
-    int sensor = analogRead(analogPin);
-    dataString += String(sensor);
-    if (analogPin < 2)
-      dataString += ",";
-  }
-
-  // open the file. note that only one file can be open at a time,
-  // so you have to close this one before opening another.
-  File dataFile = SD.open(strFilename, FILE_WRITE);
-
-  // if the file is available, write to it:
-  if (dataFile) {
-    dataFile.println(dataString);
-    dataFile.close();
-    // print to the serial port too:
-    Serial.println(dataString);
-  }
-  // if the file isn't open, pop up an error:
-  else
-    Serial.print("error opening ");
-    Serial.println(strFilename);
+  //handleHC12();
+  //handleSerialBuffer();
+  handleGPS();
 }
