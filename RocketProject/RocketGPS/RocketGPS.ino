@@ -208,9 +208,7 @@ void handleGPS() {
     if (byteIn == '\n') {
       if (GPSLocal) {
         parseGPSSentence(GPSReadBuffer.c_str());
-        saveGPSDataSDCard();                          // Save GPS info to SDMicro
-        if (strstr(GPSReadBuffer.c_str(), "RMC"))
-          logfile.flush();           
+        flushSDBuffer(GPSReadBuffer.c_str());
       }
       else {
         //HC12.print("Remote GPS:");                  // Local Arduino responds to remote request
@@ -221,6 +219,10 @@ void handleGPS() {
     }
   }  
 }
+void flushSDBuffer(const char *pBuffer) {
+  if (strstr(pBuffer, "RMC"))
+    logfile.flush();
+}
 //
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Function Name: saveGPSDataSDCard
@@ -230,22 +232,41 @@ void handleGPS() {
 // Notes:
 //
 void saveGPSDataSDCard() {
+  writeGPSInfoToSD();
+  writeCRLFToSD();
+}
+//
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Function Name: writeGPSInfoToSD
+// Purpose: Writes the GPS Info out to the SD
+// Inputs: N/A
+// Output: N/A
+// Notes:
+//
+void writeGPSInfoToSD() {
   char *pBuffer = NULL;
   uint8_t strlength = 0;
-
-  pBuffer = g_gpsInfo.strTimestamp.c_str();
+  String strGPSInfo = String(g_gpsInfo.strTimestamp) + String(", ") + String(g_gpsInfo.strLatitude) + String(", ") + String(g_gpsInfo.strLongitude);
+  Serial.println(strGPSInfo);
+  pBuffer = strGPSInfo.c_str();
   strlength = strlen(pBuffer);    
-  if (strlength != logfile.write((uint8_t *)pBuffer, strlength))    //write the string to the SD file
-    handleBlinkError(ERR_SD_WRITEFILE);        
-
-  pBuffer = g_gpsInfo.strLatitude.c_str();
-  strlength = strlen(pBuffer);  
   if (strlength != logfile.write((uint8_t *)pBuffer, strlength))    //write the string to the SD file
     handleBlinkError(ERR_SD_WRITEFILE);
-
-  pBuffer = g_gpsInfo.strLongitude.c_str();
+}
+//
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Function Name: writeCRLFToSD
+// Purpose: Writes a CR/LF to the SD
+// Inputs: N/A
+// Output: N/A
+// Notes:
+//
+void writeCRLFToSD() {
+  char *pBuffer = "\n";
+  uint8_t strlength = 0;
+  
   strlength = strlen(pBuffer);    
-  if (strlength != logfile.write((uint8_t *)pBuffer, strlength))    //write the string to the SD file
+  if (strlength != logfile.write((uint8_t *)pBuffer, strlength))
     handleBlinkError(ERR_SD_WRITEFILE);
 }
 //
@@ -348,7 +369,7 @@ void parseGPRMC(const char *pBuffer) {
   pBuffer = strchr(pBuffer, ',') + 1;
   timef = atof(pBuffer);
   time = timef;
-  hour = (time / 10000) + timeZone;
+  hour = time / 10000;
   minute = (time % 10000) / 100;
   seconds = (time % 100);
   milliseconds = fmod(timef, 1.0) * 1000;
@@ -458,7 +479,7 @@ void parseGPGGA(const char *pBuffer) {
   pBuffer = strchr(pBuffer, NMEA_DELIMITER) + 1;
   float timef = atof(pBuffer);
   uint32_t time = timef;
-  hour = (time / 10000) + timeZone;
+  hour = time / 10000;
   minute = (time % 10000) / 100;
   seconds = (time % 100);
 
@@ -560,13 +581,16 @@ void parseGPGGA(const char *pBuffer) {
   g_gpsInfo.strLatitude = String(latitudeDegrees) + String(lat);
   g_gpsInfo.strLongitude = String(longitudeDegrees) + String(lon);
   g_gpsInfo.strTimestamp = String(hour) + String(":") + String(minute) + String(":") + String(seconds);
+  /*
   Serial.println("*******************************************************");
   Serial.print("Timestamp ");
   Serial.println(g_gpsInfo.strTimestamp);
   Serial.print("Latitude: ");
   Serial.println(g_gpsInfo.strLatitude);
   Serial.print("Longitude: ");
-  Serial.println(g_gpsInfo.strLongitude);    
+  Serial.println(g_gpsInfo.strLongitude);
+  */
+  saveGPSDataSDCard();
 }
 
 //
