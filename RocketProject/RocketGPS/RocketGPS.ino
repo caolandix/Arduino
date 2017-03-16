@@ -65,6 +65,8 @@ bool commandMode = false;                        // Send AT commands to remote r
 bool GPSLocal = true;                            // send GPS local or remote flag
 GPSInfo g_gpsInfo;                              // GLobal structure used to hold GPS information
 File logfile;                                   // The global file descriptor for the logfile
+uint8_t timeZone = -8;                          // PST
+
 
 // Create Software Serial Ports for HC12 & GPS - Software Serial ports Rx and Tx are opposite the HC12 Rxd and Txd
 SoftwareSerial HC12(HC12TxdPin, HC12RxdPin);
@@ -83,7 +85,7 @@ void setup() {
   GPSReadBuffer.reserve(82);                        // Reserve 82 bytes for longest NMEA sentence
 
   // Setup the serial port to be fast enough to handle the incoming data from the GPS and give it time to process it
-  Serial.begin(230400);
+  Serial.begin(115200);
   setupSD();
   setupGPS();
   // setupHC12();
@@ -205,14 +207,15 @@ void handleGPS() {
     GPSReadBuffer += char(byteIn);
     if (byteIn == '\n') {
       if (GPSLocal) {
-        Serial.print(GPSReadBuffer);
         parseGPSSentence(GPSReadBuffer.c_str());
+        saveGPSDataSDCard();                          // Save GPS info to SDMicro
+        if (strstr(GPSReadBuffer.c_str(), "RMC"))
+          logfile.flush();           
       }
       else {
         //HC12.print("Remote GPS:");                  // Local Arduino responds to remote request
         // HC12.print(GPSReadBuffer);                  // Sends local GPS to remote
       }
-      saveGPSDataSDCard();                          // Save GPS info to SDMicro
       // HC12.listen();                                // Found target GPS sentence, start listening to HC12 again
       GPSReadBuffer = "";                           // Delete unwanted strings
     }
@@ -224,8 +227,7 @@ void handleGPS() {
 // Purpose: Writes the GPS information to the SDCard
 // Inputs: N/A
 // Output: N/A
-// Notes:This is stub code TBH. Because the SDCard is actually a part of the GPS unit, more than likely it will require different
-//        processing however for now it is here to allow development to proceed.
+// Notes:
 //
 void saveGPSDataSDCard() {
   char *pBuffer = NULL;
@@ -245,8 +247,6 @@ void saveGPSDataSDCard() {
   strlength = strlen(pBuffer);    
   if (strlength != logfile.write((uint8_t *)pBuffer, strlength))    //write the string to the SD file
     handleBlinkError(ERR_SD_WRITEFILE);
-  if (strstr(pBuffer, "RMC"))
-    logfile.flush();    
 }
 //
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -316,8 +316,10 @@ bool parseGPSSentence(const char *GPSReadBuffer) {
     // Handle the $GPGGA string
     if (strstr(GPSReadBuffer, "$GPGGA"))
       parseGPGGA(pBuffer);
+      /*
     else if (strstr(GPSReadBuffer, "$GPRMC"))
       parseGPRMC(pBuffer);
+      */
     return true;
   }
   return false;
@@ -346,7 +348,7 @@ void parseGPRMC(const char *pBuffer) {
   pBuffer = strchr(pBuffer, ',') + 1;
   timef = atof(pBuffer);
   time = timef;
-  hour = time / 10000;
+  hour = (time / 10000) + timeZone;
   minute = (time % 10000) / 100;
   seconds = (time % 100);
   milliseconds = fmod(timef, 1.0) * 1000;
@@ -426,7 +428,7 @@ void parseGPRMC(const char *pBuffer) {
       lon = 0;
     else
       return false;
-  }    
+  }  
 }
 /*
 $GPRMC,123519,A,4807.038,N,01131.000,E,022.4,084.4,230394,003.1,W*6A
@@ -456,7 +458,7 @@ void parseGPGGA(const char *pBuffer) {
   pBuffer = strchr(pBuffer, NMEA_DELIMITER) + 1;
   float timef = atof(pBuffer);
   uint32_t time = timef;
-  hour = time / 10000;
+  hour = (time / 10000) + timeZone;
   minute = (time % 10000) / 100;
   seconds = (time % 100);
 
@@ -522,13 +524,13 @@ void parseGPGGA(const char *pBuffer) {
   
   pBuffer = strchr(pBuffer, NMEA_DELIMITER) + 1;
   if (NMEA_DELIMITER != *pBuffer) {
-    if (pBuffer[0] == 'W')
+    if (*pBuffer == 'W')
       longitudeDegrees *= -1.0;
-    if (pBuffer[0] == 'W')
+    if (*pBuffer == 'W')
       lon = 'W';
-    else if (pBuffer[0] == 'E')
+    else if (*pBuffer == 'E')
       lon = 'E';
-    else if (pBuffer[0] == NMEA_DELIMITER)
+    else if (*pBuffer == NMEA_DELIMITER)
       lon = 0;
     else
       return false;
@@ -554,6 +556,17 @@ void parseGPGGA(const char *pBuffer) {
   pBuffer = strchr(pBuffer, NMEA_DELIMITER) + 1;
   if (NMEA_DELIMITER != *pBuffer)
     geoIDHeight = atof(pBuffer);
+    
+  g_gpsInfo.strLatitude = String(latitudeDegrees) + String(lat);
+  g_gpsInfo.strLongitude = String(longitudeDegrees) + String(lon);
+  g_gpsInfo.strTimestamp = String(hour) + String(":") + String(minute) + String(":") + String(seconds);
+  Serial.println("*******************************************************");
+  Serial.print("Timestamp ");
+  Serial.println(g_gpsInfo.strTimestamp);
+  Serial.print("Latitude: ");
+  Serial.println(g_gpsInfo.strLatitude);
+  Serial.print("Longitude: ");
+  Serial.println(g_gpsInfo.strLongitude);    
 }
 
 //
@@ -662,7 +675,6 @@ void loop() {
   // Read the serial
   if (Serial.available()) {
    char c = Serial.read();
-   Serial.write(c);
    GPS.write(c);
   }
   //handleHC12();
