@@ -7,8 +7,10 @@ Team Members:
 Purpose: Send up in a rocket a GPS unit that transmits Lat/Long and saves more extensive data to an SDMicro chip
 
 NOTES: Although I based this code on samples for the adafruit GPS unit, it is mostly all original code.
-
-NMEA Sentences are documented here: http://www.gpsinformation.org/dale/nmea.htm
+REFERENCES:
+- NMEA Sentences are documented here: http://www.gpsinformation.org/dale/nmea.htm
+- Some GPS code lifted from here: https://github.com/adafruit/Adafruit_GPS
+- SD Library used: https://github.com/adafruit/SD
 */
 
 // Header files for preprocessing
@@ -16,7 +18,11 @@ NMEA Sentences are documented here: http://www.gpsinformation.org/dale/nmea.htm
 #include <SPI.h>
 #include <SD.h>
 
-// 
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// NMEA definitions to tell the GPS unit how to communicate
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// These set the update speed of the GPS unit
 #define PMTK_SET_NMEA_UPDATE_1HZ  "$PMTK220,1000*1F"
 #define PMTK_SET_NMEA_UPDATE_5HZ  "$PMTK220,200*2C"
 #define PMTK_SET_NMEA_UPDATE_10HZ "$PMTK220,100*2F"
@@ -51,12 +57,13 @@ struct GPSInfo {
   String strSpeed;        // Speed in knots
   String strStatus;       // Active or Void -- Not sure what this means but it's a part of the NMEA definition
   String strTrackingAngle;
+  String strAltitude;       // Altitude
 };
 
 // Error types we report on
 enum { ERR_UNKNOWN = 1, ERR_SD_INIT, ERR_SD_CREATEFILE, ERR_SD_WRITEFILE};
 
-// HW pins used int he Arduino
+// HW pins used in the Arduino
 const byte HC12RxdPin = 4;                      // "RXD" Pin on HC12 -- Unused
 const byte HC12TxdPin = 5;                      // "TXD" Pin on HC12 -- Unused
 const byte HC12SetPin = 6;                      // "SET" Pin on HC12 -- Unused
@@ -67,40 +74,42 @@ const byte GPSledPin = 13;                      // LED Pin for the GPS shield
 
 // Begin variable declarations
 char byteIn;                                        // Temporary variable
-String HC12ReadBuffer = "";                         // Read/Write Buffer 1 -- Serial -- Unused
-String SerialReadBuffer = "";                       // Read/Write Buffer 2 -- HC12 -- Unused
 String GPSReadBuffer = "";                          // Read/Write Buffer 3 -- GPS
-bool serialEnd = false;                          // Flag for End of Serial String -- Unused
-bool HC12End = false;                            // Flag for End of HC12 String -- Unused
 bool GPSEnd = false;                             // Flag for End of GPS String
-bool commandMode = false;                        // Send AT commands to remote receivers -- Unused
 bool GPSLocal = true;                            // send GPS local or remote flag
 GPSInfo g_gpsInfo;                              // GLobal structure used to hold GPS information
 File logfile;                                   // The global file descriptor for the logfile
+
+// Values defined for future usage, not currently active.
 uint8_t timeZone = -8;                          // PST -- Unused
+String HC12ReadBuffer = "";                         // Read/Write Buffer 1 -- Serial -- Unused
+String SerialReadBuffer = "";                       // Read/Write Buffer 2 -- HC12 -- Unused
+bool commandMode = false;                        // Send AT commands to remote receivers -- Unused
+bool serialEnd = false;                          // Flag for End of Serial String -- Unused
+bool HC12End = false;                            // Flag for End of HC12 String -- Unused
 
 
 // Create Software Serial Ports for HC12 & GPS - Software Serial ports Rx and Tx are opposite the HC12 Rxd and Txd
-SoftwareSerial HC12(HC12TxdPin, HC12RxdPin);
+SoftwareSerial HC12(HC12TxdPin, HC12RxdPin);     // Unused
 SoftwareSerial GPS(GPSTxdPin, GPSRxdPin);
 //
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Function Name: setup
-// Purpose: Setsup all preliminary initialization needed before entering the primary loop()
+// Purpose: Sets up all preliminary initialization needed before entering the primary loop()
 // Inputs: N/A
 // Output: N/A
 // Notes:
 //
 void setup() {
-  //HC12ReadBuffer.reserve(82);                       // Reserve 82 bytes for message
-  //SerialReadBuffer.reserve(82);                     // Reserve 82 bytes for message
+  //HC12ReadBuffer.reserve(82);                       // Reserve 82 bytes for message - unused
+  //SerialReadBuffer.reserve(82);                     // Reserve 82 bytes for message - unused
   GPSReadBuffer.reserve(82);                        // Reserve 82 bytes for longest NMEA sentence
 
   // Setup the serial port to be fast enough to handle the incoming data from the GPS and give it time to process it
   Serial.begin(115200);
   setupSD();
   setupGPS();
-  // setupHC12();
+  // setupHC12();                                   //  - unused
 }
 //
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -185,14 +194,15 @@ void setupSD() {
 //
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Function Name: setupGPS()
-// Purpose: 
-// Inputs:
-// Output: 
+// Purpose: initialises and sets up the GPS unit
+// Inputs: N/A
+// Output: N/A
 // Notes: 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //
 void setupGPS() {
-  // wait for leo to be ready
+
+  // make sure that the serial connection is ready before continuing
   while (!Serial)
     ;
   GPS.begin(9600);
@@ -223,28 +233,29 @@ void handleGPS() {
         flushSDBuffer(GPSReadBuffer.c_str());
       }
       else {
-        //HC12.print("Remote GPS:");                  // Local Arduino responds to remote request
-        // HC12.print(GPSReadBuffer);                  // Sends local GPS to remote
+        //HC12.print("Remote GPS:");                  // Local Arduino responds to remote request  - unused
+        // HC12.print(GPSReadBuffer);                  // Sends local GPS to remote - unused
       }
-      // HC12.listen();                                // Found target GPS sentence, start listening to HC12 again
+      // HC12.listen();                                // Found target GPS sentence, start listening to HC12 again - unused
       GPSReadBuffer = "";                           // Delete unwanted strings
     }
   }  
 }
 //
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Function Name: saveGPSDataSDCard
-// Purpose: Writes the GPS information to the SDCard
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Function Name: flushSDBuffer
+// Purpose: Actual Write to the GPS information to the SDCard
 // Inputs: N/A
 // Output: N/A
-// Notes:
+// Notes: by calling this function it ensures that the file gets the data in the case of an ejection of the SD card or
+//      power loss.
 //
 void flushSDBuffer(const char *pBuffer) {
   if (strstr(pBuffer, "RMC"))
     logfile.flush();
 }
 //
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Function Name: saveGPSDataSDCard
 // Purpose: Writes the GPS information to the SDCard
 // Inputs: N/A
@@ -256,7 +267,7 @@ void saveGPSDataSDCard() {
   writeCRLFToSD();
 }
 //
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Function Name: writeGPSInfoToSD
 // Purpose: Writes the GPS Info out to the SD
 // Inputs: N/A
@@ -264,18 +275,15 @@ void saveGPSDataSDCard() {
 // Notes:
 //
 void writeGPSInfoToSD() {
-  //writeStringToSD((String("Date: ") + g_gpsInfo.strDate).c_str());
   writeStringToSD((String("Timestamp: ") + g_gpsInfo.strTimestamp).c_str());
   writeStringToSD(" ");
   writeStringToSD((String("Position: ") + String(g_gpsInfo.strLatitude) + String(", ") + String(g_gpsInfo.strLongitude)).c_str());
   writeStringToSD(" ");
   writeStringToSD((String("Speed: ") + g_gpsInfo.strSpeed + String("knts")).c_str());
   writeStringToSD(" ");
-  //writeStringToSD(g_gpsInfo.strTrackingAngle.c_str());
-  
 }
 //
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Function Name: writeStringToSD
 // Purpose: Writes a string to the SD
 // Inputs: 
@@ -289,7 +297,7 @@ void writeStringToSD(char *pBuffer) {
     handleBlinkError(ERR_SD_WRITEFILE);
 }
 //
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Function Name: writeCRLFToSD
 // Purpose: Writes a CR/LF to the SD
 // Inputs: N/A
@@ -305,12 +313,12 @@ void writeCRLFToSD() {
     handleBlinkError(ERR_SD_WRITEFILE);
 }
 //
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Function Name: parseHex
 // Purpose: read a Hex value and return the decimal equivalent
 // Inputs: N/A
 // Output: N/A
-// Notes:
+// Notes: Code found on AdaFruit GPS examples
 //
 uint8_t parseHex(const char c) {
     if (c < '0')
@@ -324,12 +332,13 @@ uint8_t parseHex(const char c) {
     return 0;
 }
 //
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Function Name: checksumPassed
-// Purpose: Looks for a checksum in the data stream to make sure it is a valid line in case there is a failure to receive a full sentence
+// Purpose: Looks for a checksum in the data stream to make sure it is a valid line in case there is a failure to
+//      receive a full sentence
 // Inputs: N/A
 // Output: N/A
-// Notes:
+// Notes: Code found on AdaFruit GPS examples
 //
 bool checksumPassed(const char *GPSReadBuffer) {
   
@@ -372,11 +381,10 @@ bool parseGPSSentence(const char *GPSReadBuffer) {
     // Handle the $GPRMC string
     if (strstr(GPSReadBuffer, "$GPRMC"))
       parseGPRMC(pBuffer);
-  /*
+
     // Handle the $GPGGA string
     else if (strstr(GPSReadBuffer, "$GPGGA"))
       parseGPGGA(pBuffer);
-      */
     return true;
   }
   return false;
@@ -536,6 +544,22 @@ String parseDate(char **ppBuffer) {
 }
 //
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Function Name: parseAltitude
+// Purpose: Parses out the altitude from the sentence
+// Inputs:
+//    - ppBuffer: the buffer of raw data read in by the GPS module
+// Output: String containing the altitude
+// Notes:
+//
+String parseAltitude(char **ppBuffer) {
+    String str;
+    *ppBuffer = strchr(*ppBuffer, NMEA_DELIMITER) + 1;
+    if (NMEA_DELIMITER != **ppBuffer)
+      str = String(atof(*ppBuffer));
+    return str + String("m");
+}
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Function Name: parseGPRMC
 // Purpose: Parses out the GPS GPRMC sentence and extracts the meaningful data for display
 // Inputs: 
@@ -559,7 +583,6 @@ Where:
      *6A          The checksum data, always begins with *
 */
 void parseGPRMC(const char *pBuffer) {
-  bool bActive;
   
   // get time
   g_gpsInfo.strTimestamp = parseTime(&pBuffer);
@@ -578,11 +601,6 @@ void parseGPRMC(const char *pBuffer) {
   // parse out the speed
   g_gpsInfo.strSpeed = parseSpeed(&pBuffer);
 
-  // parse out the trackingAngle
-  //g_gpsInfo.strTrackingAngle = parseTrackingAngle(&pBuffer);
-
-  // parse out the Date
-  // g_gpsInfo.strDate = parseDate(&pBuffer);
   saveGPSDataSDCard();  
 }
 //
@@ -618,13 +636,6 @@ void parseGPRMC(const char *pBuffer) {
      *47          the checksum data, always begins with *
 */
 void parseGPGGA(const char *pBuffer) {
-  float geoIDHeight, altitude, HDOP, latitudeDegrees, longitudeDegrees, latitude, longitude;
-  char degreebuff[10];  
-  char lat, lon, mag;
-  uint8_t hour, minute, seconds, year, month, day, fixquality, satellites;
-  uint16_t milliseconds;
-  int32_t latitude_fixed, longitude_fixed, degree;
-  long minutes;
 
   // Ignore time
   parseTime(&pBuffer);
@@ -635,36 +646,60 @@ void parseGPGGA(const char *pBuffer) {
   // Ignore longitude
   parseLatLong(&pBuffer, false);
 
-  pBuffer = strchr(pBuffer, NMEA_DELIMITER) + 1;
-  if (NMEA_DELIMITER != *pBuffer)
-    fixquality = atoi(pBuffer);
+  // Ignore Fix quality
+  parseInteger(&pBuffer);
 
-  pBuffer = strchr(pBuffer, NMEA_DELIMITER) + 1;
-  if (NMEA_DELIMITER != *pBuffer)
-    satellites = atoi(pBuffer);
+  // Ignore Satellites
+  parseInteger(&pBuffer);
 
-  pBuffer = strchr(pBuffer, NMEA_DELIMITER) + 1;
-  if (NMEA_DELIMITER != *pBuffer)
-    HDOP = atof(pBuffer);
+  // Ignore HDOP
+  parseFloat(&pBuffer);
   
-  pBuffer = strchr(pBuffer, NMEA_DELIMITER) + 1;
-  if (NMEA_DELIMITER != *pBuffer)
-    altitude = atof(pBuffer);
-    
-  pBuffer = strchr(pBuffer, NMEA_DELIMITER) + 1;
-  pBuffer = strchr(pBuffer, NMEA_DELIMITER) + 1;
-  if (NMEA_DELIMITER != *pBuffer)
-    geoIDHeight = atof(pBuffer);
-}
+  // get the altitude
+  g_gpsInfo.strAltitude = parseAltitude(&pBuffer);
 
+  // bypass a couple fields with nothign in them
+  pBuffer = strchr(pBuffer, NMEA_DELIMITER) + 1;
+  pBuffer = strchr(pBuffer, NMEA_DELIMITER) + 1;
+
+  // ignore geoIDHeight
+  parseFloat(&pBuffer);
+}
+//
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Function Name: parseInteger()
+// Purpose: Parses out a generic integer value from the GPS Sentence
+//    - ppBuffer: the buffer of raw data read in by the GPS module
+// Output: String containing the integer or a blank string on error
+// Notes:
+//
+String parseInteger(char **ppBuffer) {
+    *ppBuffer = strchr(*ppBuffer, NMEA_DELIMITER) + 1;
+    if (NMEA_DELIMITER != **ppBuffer)
+      return String(atoi(*ppBuffer));
+    return "";
+}
+//
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Function Name: parseFloat()
+// Purpose: Parses out a generic float value from the GPS Sentence
+//    - ppBuffer: the buffer of raw data read in by the GPS module
+// Output: String containing the integer or a blank string on error
+// Notes:
+//
+String parseFloat(char **ppBuffer) {
+    *ppBuffer = strchr(*ppBuffer, NMEA_DELIMITER) + 1;
+    if (NMEA_DELIMITER != **ppBuffer)
+      return String(atof(*ppBuffer));
+    return "";
+}
 //
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Function Name: setupHC12()
-// Purpose: 
-// Inputs:
-// Output: 
+// Purpose: Initialises the HC-12 unit
+// Inputs: N/A
+// Output: N/A
 // Notes: 
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //
 void setupHC12() {
   // Setup the HC12 unit for usage
@@ -675,7 +710,7 @@ void setupHC12() {
   HC12.listen();                                    // Listen to HC12
 }
 //
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Function Name: handleHC12
 // Purpose: Reads and manages the data coming from the readHC12
 // Inputs: N/A
@@ -711,10 +746,11 @@ void handleHC12() {
   }  
 }
 //
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Function Name: handleSerialBuffer
-// Purpose: Reads and manages the data coming from the serial buffer used for communication between the the GPS and the radio HC12
-// Inputs:
+// Purpose: Reads and manages the data coming from the serial buffer used for communication between the the GPS and
+//      the radio HC12
+// Inputs: N/A
 // Output: N/A
 // Notes:
 //
