@@ -5,6 +5,10 @@ Team Members:
   Caolan Dix
   Riwen Mao
 Purpose: Send up in a rocket a GPS unit that transmits Lat/Long and saves more extensive data to an SDMicro chip
+
+NOTES: Although I based this code on samples for the adafruit GPS unit, it is mostly all original code.
+
+NMEA Sentences are documented here: http://www.gpsinformation.org/dale/nmea.htm
 */
 
 // Header files for preprocessing
@@ -30,42 +34,50 @@ Purpose: Send up in a rocket a GPS unit that transmits Lat/Long and saves more e
 #define PMTK_SET_NMEA_OUTPUT_OFF "$PMTK314,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0*28"
 #define PMTK_Q_RELEASE "$PMTK605*31"
 
+// The field delimiter in NMEA sentences
 #define NMEA_DELIMITER  ','
 
 // SD related settings
 #define LOG_FIXONLY false  
 
+//
+// Structure used to hold information about the position
+//
 struct GPSInfo {
-  String strLatitude;
-  String strLongitude;
-  String strTimestamp;
+  String strLatitude;     // Latitude... hurrrdurrr
+  String strLongitude;    // Uhm, longitude 
+  String strTimestamp;    // Timestamp
+  String strDate;         // The Current Date
+  String strSpeed;        // Speed in knots
+  String strStatus;       // Active or Void -- Not sure what this means but it's a part of the NMEA definition
+  String strTrackingAngle;
 };
 
 // Error types we report on
 enum { ERR_UNKNOWN = 1, ERR_SD_INIT, ERR_SD_CREATEFILE, ERR_SD_WRITEFILE};
 
 // HW pins used int he Arduino
-const byte HC12RxdPin = 4;                      // "RXD" Pin on HC12
-const byte HC12TxdPin = 5;                      // "TXD" Pin on HC12
-const byte HC12SetPin = 6;                      // "SET" Pin on HC12
+const byte HC12RxdPin = 4;                      // "RXD" Pin on HC12 -- Unused
+const byte HC12TxdPin = 5;                      // "TXD" Pin on HC12 -- Unused
+const byte HC12SetPin = 6;                      // "SET" Pin on HC12 -- Unused
 const byte GPSRxdPin = 7;                       // "RXD" on GPS (if available)
 const byte GPSTxdPin = 8;                       // "TXD" on GPS
-const byte GPSchipSelect = 10;
-const byte GPSledPin = 13;
+const byte GPSchipSelect = 10;                  // ChipSelect for the SD
+const byte GPSledPin = 13;                      // LED Pin for the GPS shield
 
 // Begin variable declarations
 char byteIn;                                        // Temporary variable
-String HC12ReadBuffer = "";                         // Read/Write Buffer 1 -- Serial
-String SerialReadBuffer = "";                       // Read/Write Buffer 2 -- HC12
+String HC12ReadBuffer = "";                         // Read/Write Buffer 1 -- Serial -- Unused
+String SerialReadBuffer = "";                       // Read/Write Buffer 2 -- HC12 -- Unused
 String GPSReadBuffer = "";                          // Read/Write Buffer 3 -- GPS
-bool serialEnd = false;                          // Flag for End of Serial String
-bool HC12End = false;                            // Flag for End of HC12 String
+bool serialEnd = false;                          // Flag for End of Serial String -- Unused
+bool HC12End = false;                            // Flag for End of HC12 String -- Unused
 bool GPSEnd = false;                             // Flag for End of GPS String
-bool commandMode = false;                        // Send AT commands to remote receivers
+bool commandMode = false;                        // Send AT commands to remote receivers -- Unused
 bool GPSLocal = true;                            // send GPS local or remote flag
 GPSInfo g_gpsInfo;                              // GLobal structure used to hold GPS information
 File logfile;                                   // The global file descriptor for the logfile
-uint8_t timeZone = -8;                          // PST
+uint8_t timeZone = -8;                          // PST -- Unused
 
 
 // Create Software Serial Ports for HC12 & GPS - Software Serial ports Rx and Tx are opposite the HC12 Rxd and Txd
@@ -219,6 +231,14 @@ void handleGPS() {
     }
   }  
 }
+//
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Function Name: saveGPSDataSDCard
+// Purpose: Writes the GPS information to the SDCard
+// Inputs: N/A
+// Output: N/A
+// Notes:
+//
 void flushSDBuffer(const char *pBuffer) {
   if (strstr(pBuffer, "RMC"))
     logfile.flush();
@@ -244,12 +264,27 @@ void saveGPSDataSDCard() {
 // Notes:
 //
 void writeGPSInfoToSD() {
-  char *pBuffer = NULL;
-  uint8_t strlength = 0;
-  String strGPSInfo = String(g_gpsInfo.strTimestamp) + String(", ") + String(g_gpsInfo.strLatitude) + String(", ") + String(g_gpsInfo.strLongitude);
-  Serial.println(strGPSInfo);
-  pBuffer = strGPSInfo.c_str();
-  strlength = strlen(pBuffer);    
+  //writeStringToSD((String("Date: ") + g_gpsInfo.strDate).c_str());
+  writeStringToSD((String("Timestamp: ") + g_gpsInfo.strTimestamp).c_str());
+  writeStringToSD(" ");
+  writeStringToSD((String("Position: ") + String(g_gpsInfo.strLatitude) + String(", ") + String(g_gpsInfo.strLongitude)).c_str());
+  writeStringToSD(" ");
+  writeStringToSD((String("Speed: ") + g_gpsInfo.strSpeed + String("knts")).c_str());
+  writeStringToSD(" ");
+  //writeStringToSD(g_gpsInfo.strTrackingAngle.c_str());
+  
+}
+//
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Function Name: writeStringToSD
+// Purpose: Writes a string to the SD
+// Inputs: 
+//    - pBuffer: a pointer to the string to write
+// Output: N/A
+// Notes:
+//
+void writeStringToSD(char *pBuffer) {
+  int strlength = strlen(pBuffer);    
   if (strlength != logfile.write((uint8_t *)pBuffer, strlength))    //write the string to the SD file
     handleBlinkError(ERR_SD_WRITEFILE);
 }
@@ -334,16 +369,170 @@ bool parseGPSSentence(const char *GPSReadBuffer) {
   // Verify the data to see if we received a checksum
   if (checksumPassed(GPSReadBuffer)) {
         
-    // Handle the $GPGGA string
-    if (strstr(GPSReadBuffer, "$GPGGA"))
-      parseGPGGA(pBuffer);
-      /*
-    else if (strstr(GPSReadBuffer, "$GPRMC"))
+    // Handle the $GPRMC string
+    if (strstr(GPSReadBuffer, "$GPRMC"))
       parseGPRMC(pBuffer);
+  /*
+    // Handle the $GPGGA string
+    else if (strstr(GPSReadBuffer, "$GPGGA"))
+      parseGPGGA(pBuffer);
       */
     return true;
   }
   return false;
+}
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Function Name: parseTime
+// Purpose: Parses out the timestamp of the GPS sentence
+// Inputs: 
+//    - ppBuffer: a pointer to the buffer of raw data read in by the GPS module
+// Output: String of the timestamp
+// Notes: 
+//
+String parseTime(char **ppBuffer) {
+  uint8_t hour, minute, seconds;
+  uint16_t milliseconds;
+  float timef;
+  uint32_t time;
+
+  *ppBuffer = strchr(*ppBuffer, NMEA_DELIMITER) + 1;
+  timef = atof(*ppBuffer);
+  time = timef;
+  hour = time / 10000;
+  minute = (time % 10000) / 100;
+  seconds = (time % 100);
+  milliseconds = fmod(timef, 1.0) * 1000;       // Ignored for now
+  return String(hour) + String(":") + String(minute) + String(":") + String(seconds);
+}
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Function Name: parseLatLong
+// Purpose: Parses out the latitude or longitude of the the buffer
+// Inputs: 
+//    - ppBuffer: a pointer to the buffer of raw data read in by the GPS module
+//    - bIsLatitude: true we're doing lat, false is longitude
+// Output: String of the Lat or Long
+// Notes: 
+//
+String parseLatLong(char **ppBuffer, bool bIsLatitude) {
+  char szBuffer[10];  
+  char compassDir;
+  float position;
+  float latlongDegrees;
+  int32_t position_fixed, degree;
+  long minutes;
+  uint8_t idxAdv;       // Index advancer
+
+  // Go past the NMEA_DELIMITER
+  *ppBuffer = strchr(*ppBuffer, NMEA_DELIMITER) + 1;
+  
+  if (NMEA_DELIMITER != **ppBuffer) {
+    idxAdv = (bIsLatitude) ? 2 : 3;
+    strncpy(szBuffer, *ppBuffer, idxAdv);
+    *ppBuffer += idxAdv;
+    szBuffer[idxAdv] = '\0';
+    
+    degree = atol(szBuffer) * 10000000;
+    strncpy(szBuffer, *ppBuffer, 2);
+
+    // skip decimal point
+    *ppBuffer += 3;
+
+    // Build up the degrees.minutes
+    strncpy(szBuffer + 2, *ppBuffer, 4);
+    szBuffer[6] = '\0';
+    minutes = 50 * atol(szBuffer) / 3;
+    position_fixed = degree + minutes;
+    position = degree / 100000 + minutes * 0.000006F;
+    latlongDegrees = (position - 100 * int(position / 100)) / 60.0;
+    latlongDegrees += int(position / 100);
+  }
+
+  // Go to the compassDir field...
+  *ppBuffer = strchr(*ppBuffer, NMEA_DELIMITER) + 1;
+  if (NMEA_DELIMITER != **ppBuffer) {
+    if (bIsLatitude) {
+      if (**ppBuffer == 'S')
+        latlongDegrees *= -1.0;
+      compassDir = (**ppBuffer == 'N') ? 'N' : 'S';
+    }
+    else {
+      if (**ppBuffer == 'W')
+        latlongDegrees *= -1.0;
+      compassDir = (**ppBuffer == 'W') ? 'W' : 'E'; 
+    }
+  }
+  return String(latlongDegrees) + String(compassDir);
+}
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Function Name: parseSpeed
+// Purpose: Parses out the speed from a NMEA GPS Sentence
+// Inputs: 
+//    - pBuffer: the buffer of raw data read in by the GPS module
+// Output: N/A
+// Notes: 
+//
+String parseSpeed(char **ppBuffer) {
+  float speed;
+
+  *ppBuffer = strchr(*ppBuffer, NMEA_DELIMITER) + 1;
+  if (NMEA_DELIMITER != **ppBuffer)
+    speed = atof(*ppBuffer);
+  return String(speed);
+}
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Function Name: parseTrackingAngle
+// Purpose: Parses out the tracking angle from a NMEA GPS Sentence
+// Inputs: 
+//    - ppBuffer: the buffer of raw data read in by the GPS module
+// Output: String of converted value
+// Notes: 
+//
+String parseTrackingAngle(char **ppBuffer) {
+  float trackingAngle;
+
+  *ppBuffer = strchr(*ppBuffer, NMEA_DELIMITER) + 1;
+  if (NMEA_DELIMITER != **ppBuffer)
+    trackingAngle = atof(*ppBuffer);
+  return String(trackingAngle);
+}
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Function Name: parseDate
+// Purpose: Parses out the Date from a NMEA GPS Sentence
+// Inputs: 
+//    - ppBuffer: the buffer of raw data read in by the GPS module
+// Output: String of converted value
+// Notes: 
+//
+String parseDate(char **ppBuffer) {
+  char szBuffer[6];
+  
+  *ppBuffer = strchr(*ppBuffer, NMEA_DELIMITER) + 1;
+  if (NMEA_DELIMITER != **ppBuffer) {
+    strncpy(szBuffer, *ppBuffer, 6);
+    *ppBuffer += 6;
+    szBuffer[6] = '\0';
+  }
+
+  // Got the date values and now need to separate into a date format of YY/MM/DD
+  char year[2], month[2], day[2];
+
+  Serial.println(szBuffer);
+  strncpy(month, szBuffer, 2);
+  month[2] = '\0';
+  strncpy(day, szBuffer + 2, 2);
+  day[2] = '\0';
+  strncpy(year, szBuffer + 4, 2);
+  year[2] = '\0';
+  Serial.println(month);
+  Serial.println(day);
+  Serial.println(year);  
+
+  return String(year) + String("/") + String(month) + String("/") + String(day);
 }
 //
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -352,105 +541,8 @@ bool parseGPSSentence(const char *GPSReadBuffer) {
 // Inputs: 
 //    - pBuffer: the buffer of raw data read in by the GPS module
 // Output: N/A
-// Notes:
+// Notes: 
 //
-void parseGPRMC(const char *pBuffer) {
-  uint8_t hour, minute, seconds;
-  uint16_t milliseconds;
-  bool bActive;
-  char degreebuff[10];  
-  char lat, lon, mag;
-  float latitudeDegrees, longitudeDegrees, latitude, longitude, timef;
-  int32_t latitude_fixed, longitude_fixed, degree;
-  uint32_t time;
-  long minutes;
-  
-  // get time
-  pBuffer = strchr(pBuffer, ',') + 1;
-  timef = atof(pBuffer);
-  time = timef;
-  hour = time / 10000;
-  minute = (time % 10000) / 100;
-  seconds = (time % 100);
-  milliseconds = fmod(timef, 1.0) * 1000;
-
-  // parse out Active (A) or void (V)
-  pBuffer = strchr(pBuffer, NMEA_DELIMITER) + 1;
-  if (NMEA_DELIMITER != *pBuffer)
-    bActive = (pBuffer[0] == 'A') ? true : false;
-  
-  // parse out latitude
-  pBuffer = strchr(pBuffer, NMEA_DELIMITER) + 1;
-  if (NMEA_DELIMITER != *pBuffer) {
-    strncpy(degreebuff, pBuffer, 2);
-    pBuffer += 2;
-    degreebuff[2] = '\0';
-    degree = atol(degreebuff) * 10000000;
-
-    // minutes
-    strncpy(degreebuff, pBuffer, 2);
-
-    // skip decimal point
-    pBuffer += 3;
-    strncpy(degreebuff + 2, pBuffer, 4);
-    degreebuff[6] = '\0';
-    minutes = 50 * atol(degreebuff) / 3;
-    latitude_fixed = degree + minutes;
-    latitude = degree / 100000 + minutes * 0.000006F;
-    latitudeDegrees = (latitude - 100 * int(latitude / 100)) / 60.0;
-    latitudeDegrees += int(latitude / 100);
-  }
-  
-  pBuffer = strchr(pBuffer, NMEA_DELIMITER) + 1;
-  if (NMEA_DELIMITER != *pBuffer) {
-    if (pBuffer[0] == 'S')
-      latitudeDegrees *= -1.0;
-    if (pBuffer[0] == 'N')
-      lat = 'N';
-    else if (pBuffer[0] == 'S')
-      lat = 'S';
-    else if (pBuffer[0] == NMEA_DELIMITER)
-      lat = 0;
-    else
-      return false;
-  }
-  
-  // parse out longitude
-  pBuffer = strchr(pBuffer, NMEA_DELIMITER) + 1;
-  if (NMEA_DELIMITER != *pBuffer) {
-    strncpy(degreebuff, pBuffer, 3);
-    pBuffer += 3;
-    degreebuff[3] = '\0';
-    degree = atol(degreebuff) * 10000000;
-
-    // minutes
-    strncpy(degreebuff, pBuffer, 2);
-
-    // skip decimal point
-    pBuffer += 3;
-    strncpy(degreebuff + 2, pBuffer, 4);
-    degreebuff[6] = '\0';
-    minutes = 50 * atol(degreebuff) / 3;
-    longitude_fixed = degree + minutes;
-    longitude = degree / 100000 + minutes * 0.000006F;
-    longitudeDegrees = (longitude - 100 * int(longitude / 100)) / 60.0;
-    longitudeDegrees += int(longitude / 100);
-  }
-  
-  pBuffer = strchr(pBuffer, NMEA_DELIMITER) + 1;
-  if (NMEA_DELIMITER != *pBuffer) {
-    if (pBuffer[0] == 'W')
-      longitudeDegrees *= -1.0;
-    if (pBuffer[0] == 'W')
-      lon = 'W';
-    else if (pBuffer[0] == 'E')
-      lon = 'E';
-    else if (pBuffer[0] == NMEA_DELIMITER)
-      lon = 0;
-    else
-      return false;
-  }  
-}
 /*
 $GPRMC,123519,A,4807.038,N,01131.000,E,022.4,084.4,230394,003.1,W*6A
 
@@ -466,6 +558,65 @@ Where:
      003.1,W      Magnetic Variation
      *6A          The checksum data, always begins with *
 */
+void parseGPRMC(const char *pBuffer) {
+  bool bActive;
+  
+  // get time
+  g_gpsInfo.strTimestamp = parseTime(&pBuffer);
+
+  // parse out Active (A) or void (V)
+  pBuffer = strchr(pBuffer, NMEA_DELIMITER) + 1;
+  if (NMEA_DELIMITER != *pBuffer)
+    g_gpsInfo.strStatus = (*pBuffer == 'A') ? String("Active") : String("Void");
+  
+  // parse out latitude
+  g_gpsInfo.strLatitude = parseLatLong(&pBuffer, true);
+  
+  // parse out longitude
+  g_gpsInfo.strLongitude = parseLatLong(&pBuffer, false);
+
+  // parse out the speed
+  g_gpsInfo.strSpeed = parseSpeed(&pBuffer);
+
+  // parse out the trackingAngle
+  //g_gpsInfo.strTrackingAngle = parseTrackingAngle(&pBuffer);
+
+  // parse out the Date
+  // g_gpsInfo.strDate = parseDate(&pBuffer);
+  saveGPSDataSDCard();  
+}
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Function Name: parseGPGGA
+// Purpose: Parses out the GPS Sentence GPGGA and extracts the meaningful data for display
+// Inputs: 
+//    - GPSReadBuffer: the buffer of raw data read in by the GPS module
+// Output: N/A
+// Notes:
+//
+/*
+     GGA          Global Positioning System Fix Data
+     123519       Fix taken at 12:35:19 UTC
+     4807.038,N   Latitude 48 deg 07.038' N
+     01131.000,E  Longitude 11 deg 31.000' E
+     1            Fix quality: 0 = invalid
+                               1 = GPS fix (SPS)
+                               2 = DGPS fix
+                               3 = PPS fix
+             4 = Real Time Kinematic
+             5 = Float RTK
+                               6 = estimated (dead reckoning) (2.3 feature)
+             7 = Manual input mode
+             8 = Simulation mode
+     08           Number of satellites being tracked
+     0.9          Horizontal dilution of position
+     545.4,M      Altitude, Meters, above mean sea level
+     46.9,M       Height of geoid (mean sea level) above WGS84
+                      ellipsoid
+     (empty field) time in seconds since last DGPS update
+     (empty field) DGPS station ID number
+     *47          the checksum data, always begins with *
+*/
 void parseGPGGA(const char *pBuffer) {
   float geoIDHeight, altitude, HDOP, latitudeDegrees, longitudeDegrees, latitude, longitude;
   char degreebuff[10];  
@@ -475,87 +626,14 @@ void parseGPGGA(const char *pBuffer) {
   int32_t latitude_fixed, longitude_fixed, degree;
   long minutes;
 
-  // get time
-  pBuffer = strchr(pBuffer, NMEA_DELIMITER) + 1;
-  float timef = atof(pBuffer);
-  uint32_t time = timef;
-  hour = time / 10000;
-  minute = (time % 10000) / 100;
-  seconds = (time % 100);
+  // Ignore time
+  parseTime(&pBuffer);
 
-  milliseconds = fmod(timef, 1.0) * 1000;
-
-  // parse out latitude
-  pBuffer = strchr(pBuffer, NMEA_DELIMITER) + 1;
-  if (NMEA_DELIMITER != *pBuffer) {
-    strncpy(degreebuff, pBuffer, 2);
-    pBuffer += 2;
-    degreebuff[2] = '\0';
-    degree = atol(degreebuff) * 10000000;
-
-    // minutes
-    strncpy(degreebuff, pBuffer, 2);
-
-    // skip decimal point
-    pBuffer += 3;
-    strncpy(degreebuff + 2, pBuffer, 4);
-    degreebuff[6] = '\0';
-    minutes = 50 * atol(degreebuff) / 3;
-    latitude_fixed = degree + minutes;
-    latitude = degree / 100000 + minutes * 0.000006F;
-    latitudeDegrees = (latitude - 100 * int(latitude / 100)) / 60.0;
-    latitudeDegrees += int(latitude/100);
-  }
+  // Ignore latitude
+  parseLatLong(&pBuffer, true);
   
-  pBuffer = strchr(pBuffer, NMEA_DELIMITER) + 1;
-  if (NMEA_DELIMITER != *pBuffer) {
-    if (pBuffer[0] == 'S')
-      latitudeDegrees *= -1.0;
-    if (pBuffer[0] == 'N')
-      lat = 'N';
-    else if (pBuffer[0] == 'S')
-      lat = 'S';
-    else if (pBuffer[0] == NMEA_DELIMITER)
-      lat = 0;
-    else
-      return false;
-  }
-  
-  // parse out longitude
-  pBuffer = strchr(pBuffer, NMEA_DELIMITER) + 1;
-  if (NMEA_DELIMITER != *pBuffer) {
-    strncpy(degreebuff, pBuffer, 3);
-    pBuffer += 3;
-    degreebuff[3] = '\0';
-    degree = atol(degreebuff) * 10000000;
-
-    // minutes
-    strncpy(degreebuff, pBuffer, 2);
-
-    // skip decimal point
-    pBuffer += 3;
-    strncpy(degreebuff + 2, pBuffer, 4);
-    degreebuff[6] = '\0';
-    minutes = 50 * atol(degreebuff) / 3;
-    longitude_fixed = degree + minutes;
-    longitude = degree / 100000 + minutes * 0.000006F;
-    longitudeDegrees = (longitude - 100 * int(longitude / 100)) / 60.0;
-    longitudeDegrees += int(longitude / 100);
-  }
-  
-  pBuffer = strchr(pBuffer, NMEA_DELIMITER) + 1;
-  if (NMEA_DELIMITER != *pBuffer) {
-    if (*pBuffer == 'W')
-      longitudeDegrees *= -1.0;
-    if (*pBuffer == 'W')
-      lon = 'W';
-    else if (*pBuffer == 'E')
-      lon = 'E';
-    else if (*pBuffer == NMEA_DELIMITER)
-      lon = 0;
-    else
-      return false;
-  }
+  // Ignore longitude
+  parseLatLong(&pBuffer, false);
 
   pBuffer = strchr(pBuffer, NMEA_DELIMITER) + 1;
   if (NMEA_DELIMITER != *pBuffer)
@@ -577,20 +655,6 @@ void parseGPGGA(const char *pBuffer) {
   pBuffer = strchr(pBuffer, NMEA_DELIMITER) + 1;
   if (NMEA_DELIMITER != *pBuffer)
     geoIDHeight = atof(pBuffer);
-    
-  g_gpsInfo.strLatitude = String(latitudeDegrees) + String(lat);
-  g_gpsInfo.strLongitude = String(longitudeDegrees) + String(lon);
-  g_gpsInfo.strTimestamp = String(hour) + String(":") + String(minute) + String(":") + String(seconds);
-  /*
-  Serial.println("*******************************************************");
-  Serial.print("Timestamp ");
-  Serial.println(g_gpsInfo.strTimestamp);
-  Serial.print("Latitude: ");
-  Serial.println(g_gpsInfo.strLatitude);
-  Serial.print("Longitude: ");
-  Serial.println(g_gpsInfo.strLongitude);
-  */
-  saveGPSDataSDCard();
 }
 
 //
