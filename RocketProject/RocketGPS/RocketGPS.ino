@@ -264,6 +264,20 @@ void saveGPSDataSDCard() {
 // Notes:
 //
 void writeGPSInfoToSD() {
+  char *pBuffer = (String("Date: ") + g_gpsInfo.strDate).c_str();
+  int strlength = strlen(pBuffer);    
+  if (strlength != logfile.write((uint8_t *)pBuffer, strlength))    //write the string to the SD file
+    handleBlinkError(ERR_SD_WRITEFILE);
+  Serial.println(pBuffer);
+
+  sprintf(pBuffer, "Date: %s", g_gpsInfo.strDate.c_str());
+  
+  char *pBuffer = new char[strlen(_gpsInfo.strDate.c_str()) + strlen("Date: ")];
+  strncpy(pBuffer, gpsInfo.strDate.c_str(), strlen(gpsInfo.strDate.c_str()));
+  strncpy(pBuffer + strlen(gpsInfo.strDate.c_str(), "Date: ", strlen("Date: "));
+  delete [] pBuffer;
+  
+      
   //writeStringToSD((String("Date: ") + g_gpsInfo.strDate).c_str());
   writeStringToSD((String("Timestamp: ") + g_gpsInfo.strTimestamp).c_str());
   writeStringToSD(" ");
