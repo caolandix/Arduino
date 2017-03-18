@@ -52,8 +52,9 @@ REFERENCES:
 struct GPSInfo {
   String strLatitude;     // Latitude... hurrrdurrr
   String strLongitude;    // Uhm, longitude 
-  String strTimestamp;    // Timestamp
-  String strDate;         // The Current Date
+  char *pszTimestamp;       // Timestamp
+  char *pszDate;         // The Current Date
+  //String strDate;
   String strSpeed;        // Speed in knots
   String strStatus;       // Active or Void -- Not sure what this means but it's a part of the NMEA definition
   String strTrackingAngle;
@@ -165,17 +166,17 @@ void handleBlinkError(uint8_t errCode, const char *pFilename = NULL) {
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //
 void setupSD() {
+  char filename[15];
+  
+  strcpy(filename, "GPSLOG00.TXT");
   pinMode(GPSledPin, OUTPUT);
 
   // make sure that the default chip select pin is set to output, even if you don't use it:
   pinMode(GPSchipSelect, OUTPUT);
   
   // see if the card is present and can be initialized:
-  if (!SD.begin(GPSchipSelect, 11, 12, 13)) {
+  if (!SD.begin(GPSchipSelect, 11, 12, 13))
     handleBlinkError(ERR_SD_INIT);
-  }
-  char filename[15];
-  strcpy(filename, "GPSLOG00.TXT");
   for (uint8_t i = 0; i < 100; i++) {
     filename[6] = '0' + i / 10;
     filename[7] = '0' + i % 10;
@@ -184,7 +185,6 @@ void setupSD() {
     if (!SD.exists(filename))
       break;
   }
-
   logfile = SD.open(filename, FILE_WRITE);
   if (!logfile)
     handleBlinkError(ERR_SD_CREATEFILE, filename);
@@ -213,6 +213,9 @@ void setupGPS() {
   // GPS.println(PMTK_SET_NMEA_OUTPUT_RMCGGA);
   GPS.println(PMTK_SET_NMEA_OUTPUT_ALLDATA);
   GPS.println(PMTK_SET_NMEA_UPDATE_1HZ);
+
+  g_gpsInfo.pszDate = NULL;
+  //g_gpsInfo.pszTimestamp = NULL;
 }
 //
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -223,7 +226,6 @@ void setupGPS() {
 // Notes:
 //
 void handleGPS() {
-  
   while (GPS.available()) {
     byteIn = GPS.read();
     GPSReadBuffer += char(byteIn);
@@ -265,6 +267,21 @@ void flushSDBuffer(const char *pBuffer) {
 void saveGPSDataSDCard() {
   writeGPSInfoToSD();
   writeCRLFToSD();
+  deallocGPSInfo();
+}
+void deallocGPSInfo() {
+  if (g_gpsInfo.pszDate) {
+
+    Serial.println("Deleting g_gpsInfo.pszDate");
+    delete [] g_gpsInfo.pszDate;
+    g_gpsInfo.pszDate = NULL;
+  }
+  
+  if (g_gpsInfo.pszTimestamp) {
+    Serial.println("Deleting g_gpsInfo.pszTimestamp");
+    delete [] g_gpsInfo.pszTimestamp;
+    g_gpsInfo.pszTimestamp = NULL;    
+  }
 }
 //
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -275,33 +292,22 @@ void saveGPSDataSDCard() {
 // Notes:
 //
 void writeGPSInfoToSD() {
-
-  char *pBuffer = (String("Date: ") + g_gpsInfo.strDate).c_str();
-  int strlength = strlen(pBuffer);    
-  if (strlength != logfile.write((uint8_t *)pBuffer, strlength))    //write the string to the SD file
-    handleBlinkError(ERR_SD_WRITEFILE);
-  Serial.println(pBuffer);
-
-  sprintf(pBuffer, "Date: %s", g_gpsInfo.strDate.c_str());
-
-  int len1 = strlen("Date: ");
-  int len2 = strlen(g_gpsInfo.strDate.c_str());
-  char *psomeBuffer = new char[strlen(len2 + len1)];
-  strncpy(psomeBuffer, "Date: ", len1);
-  strncpy(psomeBuffer + len1, g_gpsInfo.strDate.c_str(), len2);
-  delete [] psomeBuffer;
-  
-      
-  //writeStringToSD((String("Date: ") + g_gpsInfo.strDate).c_str());
-/*
-  writeStringToSD((String("Timestamp: ") + g_gpsInfo.strTimestamp).c_str());
-  writeStringToSD(" ");
-  writeStringToSD((String("Position: ") + String(g_gpsInfo.strLatitude) + String(", ") +
-                   String(g_gpsInfo.strLongitude)).c_str());
-  writeStringToSD(" ");
-  writeStringToSD((String("Speed: ") + g_gpsInfo.strSpeed + String("knts")).c_str());
-  writeStringToSD(" ");
-  */
+  Serial.println("*********************************************");
+  Serial.print("Date: ");
+  Serial.println(g_gpsInfo.pszDate);
+  Serial.print("Timestamp: ");
+  Serial.println(g_gpsInfo.pszTimestamp);
+  // Serial.println((String("Position: ") + String(g_gpsInfo.strLatitude) + String(", ") + String(g_gpsInfo.strLongitude)).c_str());
+  // Serial.println((String("Speed: ") + g_gpsInfo.strSpeed + String("kts")).c_str());
+  //writeStringToSD(g_gpsInfo.pszDate);
+  //writeStringToSD(g_gpsInfo.strDate.c_str());
+  //writeStringToSD(", ");
+  // writeStringToSD(g_gpsInfo.strTimestamp.c_str());
+  //writeStringToSD(g_gpsInfo.pszTimestamp);
+  //writeStringToSD((String("Position: ") + String(g_gpsInfo.strLatitude) + String(", ") + String(g_gpsInfo.strLongitude)).c_str());
+  //writeStringToSD("\n");
+  //writeStringToSD((String("Speed: ") + g_gpsInfo.strSpeed + String("knts")).c_str());
+  writeStringToSD("\n");
 }
 //
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -312,7 +318,7 @@ void writeGPSInfoToSD() {
 // Output: N/A
 // Notes:
 //
-void writeStringToSD(char *pBuffer) {
+void writeStringToSD(const char *pBuffer) {
   int strlength = strlen(pBuffer);    
   if (strlength != logfile.write((uint8_t *)pBuffer, strlength))    //write the string to the SD file
     handleBlinkError(ERR_SD_WRITEFILE);
@@ -327,9 +333,8 @@ void writeStringToSD(char *pBuffer) {
 //
 void writeCRLFToSD() {
   char *pBuffer = "\n";
-  uint8_t strlength = 0;
+  uint8_t strlength = strlen(pBuffer);
   
-  strlength = strlen(pBuffer);    
   if (strlength != logfile.write((uint8_t *)pBuffer, strlength))
     handleBlinkError(ERR_SD_WRITEFILE);
 }
@@ -388,25 +393,19 @@ bool checksumPassed(const char *GPSReadBuffer) {
 // Notes:
 //
 bool parseGPSSentence(const char *GPSReadBuffer) {
-  char *pBuffer = NULL;
 
   // if we have an invalid pointer then exit because it's an error
-  if (!GPSReadBuffer)
-    return false;
-
-  pBuffer = GPSReadBuffer;
-  
-  // Verify the data to see if we received a checksum
-  if (checksumPassed(GPSReadBuffer)) {
-        
-    // Handle the $GPRMC string
-    if (strstr(GPSReadBuffer, "$GPRMC"))
-      parseGPRMC(pBuffer);
-
-    // Handle the $GPGGA string
-    else if (strstr(GPSReadBuffer, "$GPGGA"))
-      parseGPGGA(pBuffer);
-    return true;
+  if (GPSReadBuffer) {
+    char *pBuffer = GPSReadBuffer;
+    
+    // Verify the data to see if we received a checksum
+    if (checksumPassed(GPSReadBuffer)) {
+          
+      // Handle the $GPRMC string
+      if (strstr(GPSReadBuffer, "$GPRMC"))
+        parseGPRMC(pBuffer);
+      return true;
+    }
   }
   return false;
 }
@@ -419,7 +418,7 @@ bool parseGPSSentence(const char *GPSReadBuffer) {
 // Output: String of the timestamp
 // Notes: 
 //
-String parseTime(char **ppBuffer) {
+char * parseTime(char **ppBuffer) {
   uint8_t hour, minute, seconds;
   uint16_t milliseconds;
   float timef;
@@ -428,11 +427,15 @@ String parseTime(char **ppBuffer) {
   *ppBuffer = strchr(*ppBuffer, NMEA_DELIMITER) + 1;
   timef = atof(*ppBuffer);
   time = timef;
+
   hour = time / 10000;
   minute = (time % 10000) / 100;
   seconds = (time % 100);
-  milliseconds = fmod(timef, 1.0) * 1000;       // Ignored for now
-  return String(hour) + String(":") + String(minute) + String(":") + String(seconds);
+
+  char *psz = new char[9];
+  psz[8] = '\0';
+  sprintf(psz, "%02d:%02d:%02d", hour, minute, seconds);
+  return psz;
 }
 //
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -460,7 +463,7 @@ String parseLatLong(char **ppBuffer, bool bIsLatitude) {
     idxAdv = (bIsLatitude) ? 2 : 3;
     strncpy(szBuffer, *ppBuffer, idxAdv);
     *ppBuffer += idxAdv;
-    szBuffer[idxAdv] = '\0';
+    szBuffer[idxAdv + 1] = '\0';
     
     degree = atol(szBuffer) * 10000000;
     strncpy(szBuffer, *ppBuffer, 2);
@@ -537,8 +540,10 @@ String parseTrackingAngle(char **ppBuffer) {
 // Output: String of converted value
 // Notes: 
 //
-String parseDate(char **ppBuffer) {
-  char szBuffer[6];
+//String parseDate(char **ppBuffer) {  
+char * parseDate(char **ppBuffer) {  
+  char szBuffer[7];
+  char year[3], month[3], day[3];
   
   *ppBuffer = strchr(*ppBuffer, NMEA_DELIMITER) + 1;
   if (NMEA_DELIMITER != **ppBuffer) {
@@ -546,22 +551,20 @@ String parseDate(char **ppBuffer) {
     *ppBuffer += 6;
     szBuffer[6] = '\0';
   }
-
-  // Got the date values and now need to separate into a date format of YY/MM/DD
-  char year[2], month[2], day[2];
-
-  Serial.println(szBuffer);
-  strncpy(month, szBuffer, 2);
-  month[2] = '\0';
-  strncpy(day, szBuffer + 2, 2);
+  strncpy(day, szBuffer, 2);
   day[2] = '\0';
+  strncpy(month, szBuffer + 2, 2);
+  month[2] = '\0';
   strncpy(year, szBuffer + 4, 2);
   year[2] = '\0';
-  Serial.println(month);
-  Serial.println(day);
-  Serial.println(year);  
 
-  return String(year) + String("/") + String(month) + String("/") + String(day);
+  char *pszDate = new char[9];
+  pszDate[8] = '\0';
+  sprintf(pszDate, "%s/%s/%s", year, month, day);
+  return pszDate;
+  //String str(pszDate);
+  //delete [] pszDate;
+  //return str;
 }
 //
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -603,11 +606,10 @@ Where:
      003.1,W      Magnetic Variation
      *6A          The checksum data, always begins with *
 */
-void parseGPRMC(const char *pBuffer) {
-  
+void parseGPRMC(const char *pBuffer) {  
   // get time
-  g_gpsInfo.strTimestamp = parseTime(&pBuffer);
-
+  g_gpsInfo.pszTimestamp = parseTime(&pBuffer);
+/*
   // parse out Active (A) or void (V)
   pBuffer = strchr(pBuffer, NMEA_DELIMITER) + 1;
   if (NMEA_DELIMITER != *pBuffer)
@@ -622,6 +624,13 @@ void parseGPRMC(const char *pBuffer) {
   // parse out the speed
   g_gpsInfo.strSpeed = parseSpeed(&pBuffer);
 
+  // Skip the tracking angle
+  parseTrackingAngle(&pBuffer);
+
+  // get the date
+  g_gpsInfo.pszDate = parseDate(&pBuffer);
+  // g_gpsInfo.strDate = parseDate(&pBuffer);  
+  */
   saveGPSDataSDCard();  
 }
 //
