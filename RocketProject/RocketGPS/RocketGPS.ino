@@ -21,7 +21,7 @@ REFERENCES:
 
 // Used to turn on and off debugging (Serial.println) statements for debug vs. release code
 //#define _DEBUG_SD           // SD related error tracing
-#define _DEBUG_GPSINFO        // GPSInfo related error tracing.
+//#define _DEBUG_GPSINFO        // GPSInfo related error tracing.
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // NMEA definitions to tell the GPS unit how to communicate
@@ -292,6 +292,7 @@ void flushSDBuffer(const char *pBuffer) {
 //
 void saveGPSDataSDCard() {
   writeGPSInfoToSD();
+  writeCRLFToSD();
 }
 //
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -306,20 +307,23 @@ void writeGPSInfoToSD() {
   printGPSInfo();
   #endif
 
-  String str = (String("Date/Time: ") + String(g_gpsInfo.strDate) + String(", ") + String(g_gpsInfo.pszTimestamp)).c_str();
+  String str = (String(g_gpsInfo.strDate) + String(", ") + String(g_gpsInfo.pszTimestamp) + String(", ")).c_str();
+  #ifdef _DEBUG_GPSINFO
   Serial.println(str);
+  #endif
   writeStringToSD(str.c_str());
-  writeCRLFToSD();
   
-  str = (String("Position: ") + String(g_gpsInfo.strLatitude) + String(", ") + String(g_gpsInfo.strLongitude)).c_str();
+  str = (String(g_gpsInfo.strLatitude) + String(", ") + String(g_gpsInfo.strLongitude) + String(", ")).c_str();
+  #ifdef _DEBUG_GPSINFO
   Serial.println(str);
+  #endif
   writeStringToSD(str.c_str());
-  writeCRLFToSD();
   
-  str = (String("Speed: ") + String(g_gpsInfo.strSpeed) + String("\n")).c_str();
+  str = (String(g_gpsInfo.strSpeed)).c_str();
+  #ifdef _DEBUG_GPSINFO
   Serial.println(str);
+  #endif
   writeStringToSD(str.c_str());
-  writeCRLFToSD();
 }
 //
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
