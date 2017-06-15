@@ -53,6 +53,8 @@ REFERENCES:
 // Used for Defining the size of the arrays used to create data fields
 #define TIMESTAMP_FIELD_SIZE  9
 
+void handleBlinkError(uint8_t errCode, const char *pFilename = NULL);
+
 //
 // Structure used to hold information about the position
 //
@@ -118,60 +120,7 @@ void setup() {
   Serial.begin(115200);
   setupSD();
   setupGPS();
-  // setupHC12();                                   //  - unused
-}
-//
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Function Name: blinkError()
-// Purpose: Sends out an error code to the error LED on the GPS board
-// Inputs: 
-//    - errno: the error code being registered
-// Output: N/A
-// Notes: 
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-//
-void handleBlinkError(uint8_t errCode, const char *pFilename = NULL) {  
-  switch (errCode) {
-    case ERR_SD_INIT:
-    #ifdef _DEBUG_SD
-      Serial.println("ERROR: SD Card: initialisation failed!");
-    #endif
-      break;
-    case ERR_SD_CREATEFILE:
-      if (pFilename) {
-        #ifdef _DEBUG_SD
-        Serial.print("ERROR: SD Card: Failed to create a file: ");
-        Serial.println(pFilename);
-        #endif
-      }
-      break;
-    case ERR_SD_WRITEFILE:
-      if (pFilename) {
-        #ifdef _DEBUG_SD
-        Serial.print("ERROR: SD Card: Failed to write to a file: ");
-        Serial.println(pFilename);
-        #endif
-      }
-      break;
-    default:
-      #ifdef _DEBUG_SD
-      Serial.println("ERROR: Unknown error occurred");
-      #endif
-      break;
-  }
-
-  // set the blinking code
-  while (true) {
-    for (uint8_t i = 0; i < errCode; i++) {
-      digitalWrite(GPSledPin, HIGH);
-      delay(100);
-      digitalWrite(GPSledPin, LOW);
-      delay(100);
-    }
-    for (uint8_t i = errCode; i < 10; i++) {
-      delay(200);
-    }
-  }
+  setupHC12();                                   //  - unused
 }
 //
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -235,6 +184,75 @@ void setupGPS() {
   GPS.println(PMTK_SET_NMEA_UPDATE_1HZ);
   
   g_gpsInfo.pszTimestamp = NULL;
+}
+//
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Function Name: setupHC12()
+// Purpose: Initialises the HC-12 unit
+// Inputs: N/A
+// Output: N/A
+// Notes: 
+//
+void setupHC12() {
+  // Setup the HC12 unit for usage
+  pinMode(HC12SetPin, OUTPUT);                      // Output High for Transparent / Low for Command
+  digitalWrite(HC12SetPin, HIGH);                   // Enter Transparent mode
+  delay(80);                                        // 80 ms delay before operation per datasheet
+  HC12.begin(9600);                                 // Open software serial port to HC12 at 9600 Baud
+  HC12.listen();                                    // Listen to HC12
+}
+//
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Function Name: blinkError()
+// Purpose: Sends out an error code to the error LED on the GPS board
+// Inputs: 
+//    - errno: the error code being registered
+// Output: N/A
+// Notes: 
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+void handleBlinkError(uint8_t errCode, const char *pFilename = NULL) {  
+  switch (errCode) {
+    case ERR_SD_INIT:
+    #ifdef _DEBUG_SD
+      Serial.println("ERROR: SD Card: initialisation failed!");
+    #endif
+      break;
+    case ERR_SD_CREATEFILE:
+      if (pFilename) {
+        #ifdef _DEBUG_SD
+        Serial.print("ERROR: SD Card: Failed to create a file: ");
+        Serial.println(pFilename);
+        #endif
+      }
+      break;
+    case ERR_SD_WRITEFILE:
+      if (pFilename) {
+        #ifdef _DEBUG_SD
+        Serial.print("ERROR: SD Card: Failed to write to a file: ");
+        Serial.println(pFilename);
+        #endif
+      }
+      break;
+    default:
+      #ifdef _DEBUG_SD
+      Serial.println("ERROR: Unknown error occurred");
+      #endif
+      break;
+  }
+
+  // set the blinking code
+  while (true) {
+    for (uint8_t i = 0; i < errCode; i++) {
+      digitalWrite(GPSledPin, HIGH);
+      delay(100);
+      digitalWrite(GPSledPin, LOW);
+      delay(100);
+    }
+    for (uint8_t i = errCode; i < 10; i++) {
+      delay(200);
+    }
+  }
 }
 //
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -771,22 +789,7 @@ String parseFloat(char **ppBuffer) {
       return String(atof(*ppBuffer));
     return "";
 }
-//
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Function Name: setupHC12()
-// Purpose: Initialises the HC-12 unit
-// Inputs: N/A
-// Output: N/A
-// Notes: 
-//
-void setupHC12() {
-  // Setup the HC12 unit for usage
-  pinMode(HC12SetPin, OUTPUT);                      // Output High for Transparent / Low for Command
-  digitalWrite(HC12SetPin, HIGH);                   // Enter Transparent mode
-  delay(80);                                        // 80 ms delay before operation per datasheet
-  HC12.begin(9600);                                 // Open software serial port to HC12 at 9600 Baud
-  HC12.listen();                                    // Listen to HC12
-}
+
 //
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Function Name: handleHC12
@@ -879,7 +882,7 @@ void loop() {
    char c = Serial.read();
    GPS.write(c);
   }
-  //handleHC12();
-  //handleSerialBuffer();
+  handleHC12();
+  handleSerialBuffer();
   handleGPS();
 }
